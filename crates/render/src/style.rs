@@ -84,6 +84,58 @@ fn parse_one_point(body: &str) -> Option<(f32, f32)> {
     Some((x, y))
 }
 
+/// Per-edge connection-point overrides.
+///
+/// drawio lets an edge fix its source/target attachment point on the cell's
+/// bounding box via `exitX/exitY` (source side) and `entryX/entryY` (target
+/// side). Each value is a normalised float in `[0.0, 1.0]`. When present,
+/// these override any `points=` constraint declared on the cell itself.
+///
+/// A side is treated as "set" only when *both* coordinates of the pair are
+/// present. This matches drawio's own behaviour: `exitX` alone has no effect
+/// because the renderer has no y-coordinate to combine it with.
+///
+/// Values outside `[0.0, 1.0]` are clamped on read — drawio clamps too, and
+/// the result is well-defined (the attachment lands on the cell's perimeter
+/// at most, not floating in the void).
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct EdgeEndpoints {
+    pub exit: Option<(f32, f32)>,
+    pub entry: Option<(f32, f32)>,
+}
+
+impl EdgeEndpoints {
+    /// Read the four optional style keys from `style` and pair them up.
+    pub fn from_style(style: &StyleMap) -> Self {
+        let exit_x = parse_unit(style.get("exitX"));
+        let exit_y = parse_unit(style.get("exitY"));
+        let entry_x = parse_unit(style.get("entryX"));
+        let entry_y = parse_unit(style.get("entryY"));
+        Self {
+            exit: pair(exit_x, exit_y),
+            entry: pair(entry_x, entry_y),
+        }
+    }
+}
+
+/// Parse a `[0.0, 1.0]`-normalised attachment coordinate. Values outside the
+/// range are clamped (drawio does the same). Returns `None` when the key is
+/// missing or unparseable so the caller can fall back to the cell's picker.
+fn parse_unit(s: Option<&str>) -> Option<f32> {
+    let v: f32 = s?.parse().ok()?;
+    if !v.is_finite() {
+        return None;
+    }
+    Some(v.clamp(0.0, 1.0))
+}
+
+fn pair(x: Option<f32>, y: Option<f32>) -> Option<(f32, f32)> {
+    match (x, y) {
+        (Some(x), Some(y)) => Some((x, y)),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -115,5 +167,49 @@ mod tests {
     fn malformed_points_yields_empty() {
         assert!(parse_points("garbage").is_empty());
         assert!(parse_points("[notanumber]").is_empty());
+    }
+
+    #[test]
+    fn parses_edge_endpoints_from_style() {
+        let s = StyleMap::parse(
+            "edgeStyle=orthogonalEdgeStyle;exitX=1;exitY=0.5;entryX=0;entryY=0.5;",
+        );
+        let ep = EdgeEndpoints::from_style(&s);
+        assert_eq!(ep.exit, Some((1.0, 0.5)));
+        assert_eq!(ep.entry, Some((0.0, 0.5)));
+    }
+
+    #[test]
+    fn edge_endpoints_missing_pair_member_treated_as_unset() {
+        // exitX without exitY: drawio ignores the half-spec; we do too.
+        let s = StyleMap::parse("exitX=1;entryY=0.5;");
+        let ep = EdgeEndpoints::from_style(&s);
+        assert_eq!(ep.exit, None);
+        assert_eq!(ep.entry, None);
+    }
+
+    #[test]
+    fn edge_endpoints_default_when_absent() {
+        let s = StyleMap::parse("edgeStyle=orthogonalEdgeStyle;endArrow=open;");
+        let ep = EdgeEndpoints::from_style(&s);
+        assert_eq!(ep.exit, None);
+        assert_eq!(ep.entry, None);
+    }
+
+    #[test]
+    fn edge_endpoints_clamp_out_of_range() {
+        // drawio clamps values outside [0, 1] to the perimeter. Match that.
+        let s = StyleMap::parse("exitX=1.5;exitY=-0.2;entryX=2;entryY=0;");
+        let ep = EdgeEndpoints::from_style(&s);
+        assert_eq!(ep.exit, Some((1.0, 0.0)));
+        assert_eq!(ep.entry, Some((1.0, 0.0)));
+    }
+
+    #[test]
+    fn edge_endpoints_ignore_unparseable_values() {
+        let s = StyleMap::parse("exitX=nope;exitY=0.5;entryX=0;entryY=junk;");
+        let ep = EdgeEndpoints::from_style(&s);
+        assert_eq!(ep.exit, None);
+        assert_eq!(ep.entry, None);
     }
 }
