@@ -50,9 +50,20 @@ Authoring via the CLI is not in scope for v0.
 
 ## Scope (v0)
 
-- Authoring: 5 AWS resource-icon shapes
-  (`api_gateway`, `lambda`, `s3`, `dynamodb`, `ec2`), plus the generic
-  `Node::raw` escape hatch.
+- Authoring: a curated catalogue of ~30 AWS resource-icon factories,
+  plus the generic `Node::raw` escape hatch:
+  - **Application Integration**: `api_gateway`, `sqs`, `sns`,
+    `eventbridge`, `step_functions`, `appsync`
+  - **Compute**: `lambda`, `ec2`, `ecs`, `eks`, `fargate`, `app_runner`,
+    `batch`
+  - **Database**: `dynamodb`, `rds`, `elasticache`
+  - **Storage**: `s3`, `efs`
+  - **Networking & Content Delivery**: `cloudfront`, `route_53`, `vpc`,
+    `elastic_load_balancing`
+  - **Security, Identity & Compliance**: `iam`, `cognito`,
+    `secrets_manager`, `kms`
+  - **Analytics**: `kinesis`, `athena`, `msk`
+  - **Management & Governance**: `cloudwatch`
 - Emits plain XML (`compressed="false"`); labels are plain text
   (`html=0`).
 - Rendering: parses `mxCell` vertices and edges and the

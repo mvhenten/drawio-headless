@@ -198,6 +198,153 @@ fn group_boundary_renders_as_dashed_rect() {
     assert!(svg.contains("Account A"), "group label: {svg}");
 }
 
+#[test]
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
+fn expanded_aws_catalogue_renders_glyphs() {
+    // Three new factories on a single row: pink EventBridge, pink Step
+    // Functions, red Cognito. Verifies each resolves to a real stencil
+    // glyph (not the fallback rect) and renders with its category colour.
+    let out = out_dir();
+    let mut diagram = Diagram::new("ExpandedCatalogue");
+    let eb = diagram.add_node(aws::eventbridge("eb", "Events").at(80.0, 80.0));
+    let sf = diagram.add_node(aws::step_functions("sf", "Workflow").at(320.0, 80.0));
+    let cg = diagram.add_node(aws::cognito("cg", "Users").at(560.0, 80.0));
+    diagram.connect(&eb, &sf);
+    diagram.connect(&sf, &cg);
+
+    let xml = diagram.to_xml();
+    fs::write(out.join("expanded-catalogue.drawio"), &xml).expect("write drawio");
+    assert!(xml.contains("resIcon=mxgraph.aws4.eventbridge"));
+    assert!(xml.contains("resIcon=mxgraph.aws4.step_functions"));
+    assert!(xml.contains("resIcon=mxgraph.aws4.cognito"));
+
+    let svg = drawio_render::render(&xml).expect("render");
+    fs::write(out.join("expanded-catalogue.svg"), &svg).expect("write svg");
+    // At least three stencil glyphs (one per tile) should contribute
+    // <path> elements — proves none fell back to a plain rect.
+    let path_count = svg.matches("<path").count();
+    assert!(
+        path_count >= 3,
+        "expected stencil paths from 3 tiles, got {path_count}"
+    );
+
+    // Rasterise to PNG.
+    let mut opts = usvg::Options::default();
+    {
+        let fontdb = opts.fontdb_mut();
+        fontdb.load_system_fonts();
+        let sans: Option<String> = fontdb
+            .faces()
+            .find(|face| {
+                face.families
+                    .iter()
+                    .any(|(name, _)| name.to_lowercase().contains("sans"))
+            })
+            .map(|face| face.families[0].0.clone());
+        if let Some(name) = sans {
+            fontdb.set_sans_serif_family(name);
+        }
+    }
+    let tree = usvg::Tree::from_str(&svg, &opts).expect("usvg parse");
+    let size = tree.size().to_int_size();
+    let scale: f64 = 2.0;
+    let pix_w = (f64::from(size.width()) * scale).ceil() as u32;
+    let pix_h = (f64::from(size.height()) * scale).ceil() as u32;
+    let mut pixmap = tiny_skia::Pixmap::new(pix_w, pix_h).expect("pixmap");
+    pixmap.fill(tiny_skia::Color::WHITE);
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(scale as f32, scale as f32),
+        &mut pixmap.as_mut(),
+    );
+    let png_path = out.join("expanded-catalogue.png");
+    pixmap.save_png(&png_path).expect("save png");
+
+    // Decode and pixel-sniff.
+    let png_bytes = fs::read(&png_path).expect("read png");
+    let decoder = png::Decoder::new(std::io::Cursor::new(&png_bytes));
+    let mut reader = decoder.read_info().expect("png decode");
+    let info = reader.info().clone();
+    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let frame = reader.next_frame(&mut buf).expect("png frame");
+    let data = &buf[..frame.buffer_size()];
+    let channels = match info.color_type {
+        png::ColorType::Rgba => 4,
+        png::ColorType::Rgb => 3,
+        other => panic!("unexpected png color type: {other:?}"),
+    };
+
+    // viewBox origin = (min_x - margin, min_y - margin) = (80 - 24, 80 - 24)
+    // = (56, 56). At 2x scale: pixel_offset = (56 * 2, 56 * 2) = (112, 112).
+    // Tile at user (x..x+78) -> pixel ((x - 56) * 2 .. (x + 22) * 2).
+    let tile_cols = |x: u32| {
+        let lo = x.saturating_sub(56) * 2;
+        let hi = (x + 78 - 56) * 2;
+        lo..hi
+    };
+    let pink_in_tile = |x: u32| {
+        count_in_region(data, &info, channels, tile_cols(x), 48..204, |r, g, b| {
+            // #E7157B = (231, 21, 123). Loose match.
+            r > 200 && g < 80 && (90..=160).contains(&b)
+        })
+    };
+    let red_in_tile = |x: u32| {
+        count_in_region(data, &info, channels, tile_cols(x), 48..204, |r, g, b| {
+            // #DD344C = (221, 52, 76). Loose match.
+            r > 200 && (30..=90).contains(&g) && (50..=110).contains(&b)
+        })
+    };
+    let eb_pink = pink_in_tile(80);
+    let sf_pink = pink_in_tile(320);
+    let cg_red = red_in_tile(560);
+    println!("expanded catalogue: eb_pink={eb_pink} sf_pink={sf_pink} cg_red={cg_red}");
+    assert!(
+        eb_pink > 1_000,
+        "expected substantial pink in EventBridge tile, got {eb_pink}",
+    );
+    assert!(
+        sf_pink > 1_000,
+        "expected substantial pink in Step Functions tile, got {sf_pink}",
+    );
+    assert!(
+        cg_red > 1_000,
+        "expected substantial red in Cognito tile, got {cg_red}",
+    );
+}
+
+/// Count pixels in a (col, row) rectangular region whose RGB triple matches
+/// the supplied predicate.
+fn count_in_region(
+    data: &[u8],
+    info: &png::Info<'_>,
+    channels: usize,
+    cols: std::ops::Range<u32>,
+    rows: std::ops::Range<u32>,
+    matcher: impl Fn(u8, u8, u8) -> bool,
+) -> u32 {
+    let pix_w = info.width as usize;
+    let img_h = info.height;
+    let col_hi = cols.end.min(info.width);
+    let row_hi = rows.end.min(img_h);
+    let mut hits = 0u32;
+    for row in rows.start..row_hi {
+        for col in cols.start..col_hi {
+            let idx = (row as usize * pix_w + col as usize) * channels;
+            if channels == 4 && data[idx + 3] == 0 {
+                continue;
+            }
+            if matcher(data[idx], data[idx + 1], data[idx + 2]) {
+                hits += 1;
+            }
+        }
+    }
+    hits
+}
+
 /// Walk the raw RGB(A) image data. Return (non-background pixel count,
 /// AWS-orange pixel count inside the Lambda tile bounding box).
 fn count_pixels(data: &[u8], info: &png::Info<'_>, channels: usize) -> (u32, u32) {
