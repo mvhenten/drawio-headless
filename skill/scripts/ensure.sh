@@ -48,19 +48,24 @@ if [ "$QUIET" -eq 0 ]; then
     cat >&2 <<'EOF'
 drawio-headless is not on PATH.
 
-Install with Cargo (requires Rust 1.85+):
+Recommended: install via npm (requires Node 18+):
+
+    npm install -g drawio-headless
+
+Or via the one-line curl script (no Node required):
+
+    curl -fsSL https://raw.githubusercontent.com/mvhenten/drawio-headless/main/scripts/install.sh | sh
+
+The curl script drops the binary in `~/.local/bin/drawio-headless`;
+make sure that directory is on PATH.
+
+Developer / Rust fallback (requires Rust 1.85+):
 
     cargo install --git https://github.com/mvhenten/drawio-headless \
                   --path crates/cli
 
-Or clone and build locally:
-
-    git clone https://github.com/mvhenten/drawio-headless
-    cd drawio-headless
-    cargo install --path crates/cli
-
-After installation the binary will be at `~/.cargo/bin/drawio-headless`.
-Ensure that directory is on PATH (`export PATH="$HOME/.cargo/bin:$PATH"`).
+After `cargo install` the binary is at `~/.cargo/bin/drawio-headless`;
+ensure that directory is on PATH (`export PATH="$HOME/.cargo/bin:$PATH"`).
 
 This skill does not install the binary automatically by design.
 EOF
