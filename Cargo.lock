@@ -212,6 +212,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "drawio-headless-examples"
+version = "0.1.0"
+dependencies = [
+ "drawio-author",
+ "drawio-render",
+]
+
+[[package]]
 name = "drawio-render"
 version = "0.1.0"
 dependencies = [

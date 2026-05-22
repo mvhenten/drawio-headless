@@ -1,0 +1,34 @@
+<mxfile host="drawio-headless" compressed="false" version="0.1.0">
+  <diagram id="p1" name="Cross-account VPC link">
+    <mxGraphModel dx="800" dy="600" grid="1" gridSize="10" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="acct-a" value="Account A — consumer" vertex="1" parent="1" style="points=[[0,0],[0.25,0],[0.5,0],[0.75,0],[1,0],[1,0.25],[1,0.5],[1,0.75],[1,1],[0.75,1],[0.5,1],[0.25,1],[0,1],[0,0.75],[0,0.5],[0,0.25]];outlineConnect=0;gradientColor=none;html=0;whiteSpace=wrap;fontSize=12;fontStyle=0;container=1;pointerEvents=0;collapsible=0;recursiveResize=0;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_account;strokeColor=#CD2264;fillColor=none;verticalAlign=top;align=left;spacingLeft=30;fontColor=#CD2264;dashed=1;">
+          <mxGeometry x="60" y="60" width="420" height="360" as="geometry"/>
+        </mxCell>
+        <mxCell id="acct-b" value="Account B — streaming" vertex="1" parent="1" style="points=[[0,0],[0.25,0],[0.5,0],[0.75,0],[1,0],[1,0.25],[1,0.5],[1,0.75],[1,1],[0.75,1],[0.5,1],[0.25,1],[0,1],[0,0.75],[0,0.5],[0,0.25]];outlineConnect=0;gradientColor=none;html=0;whiteSpace=wrap;fontSize=12;fontStyle=0;container=1;pointerEvents=0;collapsible=0;recursiveResize=0;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_account;strokeColor=#CD2264;fillColor=none;verticalAlign=top;align=left;spacingLeft=30;fontColor=#CD2264;dashed=1;">
+          <mxGeometry x="540" y="60" width="460" height="360" as="geometry"/>
+        </mxCell>
+        <mxCell id="consumer" value="Stream consumer" vertex="1" parent="1" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#ED7100;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=0;fontSize=12;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;">
+          <mxGeometry x="220" y="200" width="78" height="78" as="geometry"/>
+        </mxCell>
+        <mxCell id="role" value="AssumeRole" vertex="1" parent="1" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#DD344C;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=0;fontSize=12;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.identity_and_access_management;">
+          <mxGeometry x="620" y="130" width="78" height="78" as="geometry"/>
+        </mxCell>
+        <mxCell id="kafka" value="MSK cluster" vertex="1" parent="1" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#8C4FFF;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=0;fontSize=12;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.managed_streaming_for_kafka;">
+          <mxGeometry x="820" y="200" width="78" height="78" as="geometry"/>
+        </mxCell>
+        <mxCell id="e1" edge="1" parent="1" source="consumer" target="role" style="edgeStyle=orthogonalEdgeStyle;html=0;endArrow=open;startArrow=none;rounded=0;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e2" edge="1" parent="1" source="role" target="kafka" style="edgeStyle=orthogonalEdgeStyle;html=0;endArrow=open;startArrow=none;rounded=0;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e3" edge="1" parent="1" source="consumer" target="kafka" style="edgeStyle=orthogonalEdgeStyle;html=0;endArrow=open;startArrow=none;rounded=0;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

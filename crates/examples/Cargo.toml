@@ -1,0 +1,18 @@
+[package]
+name = "drawio-headless-examples"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+description = "Worked AWS architecture examples for the drawio-headless demo page."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+drawio-author.workspace = true
+drawio-render.workspace = true
+
+[lints]
+workspace = true
