@@ -20,6 +20,41 @@ stencils/
                    (see stencils/SOURCE-kubernetes)
 ```
 
+## Install
+
+Three paths, in order of convenience.
+
+### npm (recommended)
+
+Works on Linux (x86\_64 / aarch64), macOS (x86\_64 / arm64), and
+Windows (x86\_64). `npm install` downloads the matching pre-built
+binary from GitHub Releases as a postinstall step.
+
+```sh
+npm install -g drawio-headless
+drawio-headless --version
+```
+
+### Curl install script (no Node)
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/mvhenten/drawio-headless/main/scripts/install.sh | sh
+```
+
+Drops the binary in `~/.local/bin/drawio-headless` (override with
+`INSTALL_DIR=…`). Pin a specific release with `VERSION=v0.1.0 ...`.
+The script prints a `PATH` hint when `~/.local/bin` isn't already on
+your shell's path. macOS and Linux only — Windows users should use the
+npm package.
+
+### Cargo (developer / Rust path)
+
+```sh
+cargo install --git https://github.com/mvhenten/drawio-headless --path crates/cli
+```
+
+Or clone and `cargo install --path crates/cli` from a local checkout.
+
 ## Usage
 
 ### Library: author a diagram, serialise to XML
