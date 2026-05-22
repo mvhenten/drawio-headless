@@ -175,6 +175,43 @@ fn orthogonal_edges_round_trip_to_png() {
 }
 
 #[test]
+fn explicit_entry_exit_overrides_round_trip() {
+    // Three icons across the canvas. The middle edge declares explicit
+    // exit/entry on right-mid -> left-mid. The other edges use the v0
+    // points-based picker. Asserts that the override survives author ->
+    // XML -> render and that the rendered SVG places the segment exactly
+    // at the requested perimeter coordinates.
+    let out = out_dir();
+    let mut diagram = Diagram::new("EntryExitOverrides");
+    let a = diagram.add_node(aws::api_gateway("api", "API").at(0.0, 0.0));
+    let b = diagram.add_node(aws::lambda("lam", "Lambda").at(200.0, 0.0));
+    let c = diagram.add_node(aws::dynamodb("ddb", "DynamoDB").at(400.0, 0.0));
+
+    diagram.connect(&a, &b).exit(1.0, 0.5).entry(0.0, 0.5);
+    diagram.connect(&b, &c); // unconstrained; picker chooses.
+
+    let xml = diagram.to_xml();
+    fs::write(out.join("entry-exit-overrides.drawio"), &xml).expect("write drawio");
+    assert!(
+        xml.contains("exitX=1;exitY=0.5"),
+        "exit attrs in xml: {xml}"
+    );
+    assert!(
+        xml.contains("entryX=0;entryY=0.5"),
+        "entry attrs in xml: {xml}"
+    );
+
+    let svg = drawio_render::render(&xml).expect("render");
+    fs::write(out.join("entry-exit-overrides.svg"), &svg).expect("write svg");
+    // First edge is right-mid (78, 39) -> left-mid (200, 39) — colinear,
+    // so the orthogonal router emits a single straight <line>.
+    assert!(
+        svg.contains("<line x1=\"78\" y1=\"39\" x2=\"200\" y2=\"39\""),
+        "expected pinned colinear segment from API->Lambda; got: {svg}",
+    );
+}
+
+#[test]
 fn group_boundary_renders_as_dashed_rect() {
     let out = out_dir();
     let mut diagram = Diagram::new("GroupBoundary");

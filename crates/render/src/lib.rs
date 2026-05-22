@@ -23,7 +23,7 @@ use std::sync::OnceLock;
 
 use crate::model::{Edge, Model, Vertex};
 use crate::stencil::{StencilLibrary, render_stencil_to_svg};
-use crate::style::{StyleMap, parse_points};
+use crate::style::{EdgeEndpoints, StyleMap, parse_points};
 
 /// Bundled AWS stencil source (about 6 MB). Lives at compile time so the
 /// library is self-contained.
@@ -211,9 +211,10 @@ fn render_edge(out: &mut String, model: &Model, e: &Edge) {
     };
     let src_centre = (src.x + src.w / 2.0, src.y + src.h / 2.0);
     let tgt_centre = (tgt.x + tgt.w / 2.0, tgt.y + tgt.h / 2.0);
-    let (sx, sy) = pick_endpoint(src, tgt_centre).unwrap_or(src_centre);
-    let (tx, ty) = pick_endpoint(tgt, src_centre).unwrap_or(tgt_centre);
     let style = StyleMap::parse(&e.style);
+    let overrides = EdgeEndpoints::from_style(&style);
+    let (sx, sy) = resolve_endpoint(src, overrides.exit, tgt_centre);
+    let (tx, ty) = resolve_endpoint(tgt, overrides.entry, src_centre);
     let end_arrow = style.get_or("endArrow", "open");
     let marker_end = if end_arrow == "none" {
         ""
@@ -271,6 +272,24 @@ fn orthogonal_corner(src: &Vertex, start: (f64, f64), end: (f64, f64)) -> Option
     } else {
         None
     }
+}
+
+/// Pick the absolute endpoint for `cell`, honouring any per-edge override.
+///
+/// Resolution order:
+/// 1. If `over` is `Some((nx, ny))`, use the explicit normalised override —
+///    this is the edge's `exitX/exitY` or `entryX/entryY` attribute.
+/// 2. Otherwise, pick the nearest declared `points=` constraint on the cell.
+/// 3. Otherwise, fall back to the cell's geometric centre.
+fn resolve_endpoint(cell: &Vertex, over: Option<(f32, f32)>, toward: (f64, f64)) -> (f64, f64) {
+    if let Some((nx, ny)) = over {
+        return (
+            cell.x + f64::from(nx) * cell.w,
+            cell.y + f64::from(ny) * cell.h,
+        );
+    }
+    let cell_centre = (cell.x + cell.w / 2.0, cell.y + cell.h / 2.0);
+    pick_endpoint(cell, toward).unwrap_or(cell_centre)
 }
 
 /// Choose the absolute coordinate of `cell`'s declared connection point
@@ -394,6 +413,102 @@ mod tests {
         assert!(
             (b_end.0 - 339.0).abs() > 1e-6,
             "should not pick B's midpoint"
+        );
+    }
+
+    #[test]
+    fn edge_endpoint_overrides_take_priority_over_points() {
+        // Cell carries a 16-point AWS perimeter constraint set, but the
+        // edge declares explicit exitX/exitY and entryX/entryY. The
+        // override must win even when the constraint picker would have
+        // chosen a different point.
+        let aws_style = "shape=mxgraph.aws4.resourceIcon;\
+             points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],\
+             [0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],\
+             [0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];\
+             resIcon=mxgraph.aws4.lambda;fillColor=#ED7100;";
+        let a = Vertex {
+            id: "a".into(),
+            label: String::new(),
+            style: aws_style.into(),
+            x: 0.0,
+            y: 0.0,
+            w: 78.0,
+            h: 78.0,
+        };
+        let b = Vertex {
+            id: "b".into(),
+            label: String::new(),
+            style: aws_style.into(),
+            x: 200.0,
+            y: 0.0,
+            w: 78.0,
+            h: 78.0,
+        };
+        // Force right-mid -> left-mid via explicit overrides.
+        let exit = Some((1.0_f32, 0.5_f32));
+        let entry = Some((0.0_f32, 0.5_f32));
+        let a_end = resolve_endpoint(&a, exit, (b.x + b.w / 2.0, b.y + b.h / 2.0));
+        let b_end = resolve_endpoint(&b, entry, (a.x + a.w / 2.0, a.y + a.h / 2.0));
+        assert!(
+            (a_end.0 - 78.0).abs() < 1e-9 && (a_end.1 - 39.0).abs() < 1e-9,
+            "source must be at right-mid (78, 39), got {a_end:?}",
+        );
+        assert!(
+            (b_end.0 - 200.0).abs() < 1e-9 && (b_end.1 - 39.0).abs() < 1e-9,
+            "target must be at left-mid (200, 39), got {b_end:?}",
+        );
+    }
+
+    #[test]
+    fn edge_endpoint_without_override_falls_back_to_points_picker() {
+        // No edge-level override: behaviour must match the v0 picker —
+        // snap to the closest declared `points=` constraint.
+        let aws_style = "shape=mxgraph.aws4.resourceIcon;\
+             points=[[0,0,0],[1,0,0],[0,1,0],[1,1,0]];resIcon=mxgraph.aws4.lambda;";
+        let a = Vertex {
+            id: "a".into(),
+            label: String::new(),
+            style: aws_style.into(),
+            x: 0.0,
+            y: 0.0,
+            w: 78.0,
+            h: 78.0,
+        };
+        // Other cell sits to the lower-right of A; constraint picker
+        // should land on A's bottom-right corner (78, 78).
+        let toward = (300.0, 200.0);
+        let p = resolve_endpoint(&a, None, toward);
+        assert!(
+            (p.0 - 78.0).abs() < 1e-9 && (p.1 - 78.0).abs() < 1e-9,
+            "expected bottom-right corner (78, 78), got {p:?}",
+        );
+    }
+
+    #[test]
+    fn renders_edge_with_explicit_entry_exit_overrides() {
+        // Edge style declares exit/entry. The picker on the cells would
+        // pick corners (only corner points declared) — the overrides must
+        // win and force right-mid -> left-mid attachment.
+        let xml = r#"
+<mxfile compressed="false"><diagram><mxGraphModel><root>
+<mxCell id="0"/><mxCell id="1" parent="0"/>
+<mxCell id="a" value="A" vertex="1" parent="1" style="shape=mxgraph.aws4.resourceIcon;points=[[0,0,0],[1,0,0],[0,1,0],[1,1,0]];resIcon=mxgraph.aws4.lambda;fillColor=#ED7100;">
+  <mxGeometry x="0" y="0" width="78" height="78" as="geometry"/>
+</mxCell>
+<mxCell id="b" value="B" vertex="1" parent="1" style="shape=mxgraph.aws4.resourceIcon;points=[[0,0,0],[1,0,0],[0,1,0],[1,1,0]];resIcon=mxgraph.aws4.lambda;fillColor=#ED7100;">
+  <mxGeometry x="200" y="0" width="78" height="78" as="geometry"/>
+</mxCell>
+<mxCell id="e1" edge="1" parent="1" source="a" target="b" style="edgeStyle=orthogonalEdgeStyle;html=0;endArrow=open;startArrow=none;rounded=0;exitX=1;exitY=0.5;entryX=0;entryY=0.5;">
+  <mxGeometry relative="1" as="geometry"/>
+</mxCell>
+</root></mxGraphModel></diagram></mxfile>"#;
+        let svg = render(xml).unwrap();
+        // Colinear (both endpoints at y=39): orthogonal router degrades to
+        // a single straight segment, emitted as <line>.
+        assert!(
+            svg.contains("<line x1=\"78\" y1=\"39\" x2=\"200\" y2=\"39\""),
+            "expected colinear straight line at y=39; got: {svg}",
         );
     }
 

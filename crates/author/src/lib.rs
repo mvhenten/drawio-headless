@@ -84,6 +84,68 @@ struct Edge {
     id: String,
     source: String,
     target: String,
+    /// Source-side connection-point override (`exitX`, `exitY`).
+    exit: Option<(f32, f32)>,
+    /// Target-side connection-point override (`entryX`, `entryY`).
+    entry: Option<(f32, f32)>,
+}
+
+/// Chainable builder returned from [`Diagram::connect`]. Mutates the
+/// just-inserted edge so callers can pin the source/target attachment
+/// points without an extra round-trip through the diagram.
+///
+/// Existing call sites that ignore the return value (`d.connect(&a, &b);`)
+/// continue to work — the builder simply does nothing further when dropped.
+///
+/// # Example
+///
+/// ```
+/// # use drawio_author::{Diagram, aws};
+/// let mut d = Diagram::new("demo");
+/// let a = d.add_node(aws::api_gateway("api", "API").at(0.0, 0.0));
+/// let b = d.add_node(aws::lambda("lam", "Lambda").at(300.0, 0.0));
+/// d.connect(&a, &b)
+///     .exit(1.0, 0.5)   // edge leaves source's right-mid
+///     .entry(0.0, 0.5); // edge enters target's left-mid
+/// ```
+pub struct EdgeBuilder<'a> {
+    edge: &'a mut Edge,
+}
+
+impl EdgeBuilder<'_> {
+    /// Pin the source-side attachment point. `(x, y)` are normalised in
+    /// `[0.0, 1.0]` on the source cell's bounding box; values outside the
+    /// range are clamped (matching drawio).
+    ///
+    /// Returning `Self` is for chaining; the mutation lands on the
+    /// underlying edge immediately, so discarding the return value
+    /// (e.g. `.exit(1.0, 0.5);`) is fine.
+    #[allow(clippy::return_self_not_must_use)]
+    pub fn exit(self, x: f32, y: f32) -> Self {
+        self.edge.exit = Some((clamp_unit(x), clamp_unit(y)));
+        self
+    }
+
+    /// Pin the target-side attachment point. `(x, y)` are normalised in
+    /// `[0.0, 1.0]` on the target cell's bounding box; values outside the
+    /// range are clamped (matching drawio).
+    ///
+    /// Returning `Self` is for chaining; the mutation lands on the
+    /// underlying edge immediately, so discarding the return value is
+    /// fine.
+    #[allow(clippy::return_self_not_must_use)]
+    pub fn entry(self, x: f32, y: f32) -> Self {
+        self.edge.entry = Some((clamp_unit(x), clamp_unit(y)));
+        self
+    }
+}
+
+fn clamp_unit(v: f32) -> f32 {
+    if v.is_finite() {
+        v.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
 }
 
 /// Variants of AWS group / boundary containers.
@@ -249,15 +311,23 @@ impl Diagram {
         r
     }
 
-    /// Connect two nodes with an edge.
-    pub fn connect(&mut self, source: &NodeRef, target: &NodeRef) {
+    /// Connect two nodes with an edge. Returns an [`EdgeBuilder`] for
+    /// optional per-edge tweaks (e.g. pinning the source/target attachment
+    /// point via `.exit(x, y)` / `.entry(x, y)`). Discarding the return
+    /// value (the legacy `d.connect(&a, &b);` form) is fully supported.
+    pub fn connect(&mut self, source: &NodeRef, target: &NodeRef) -> EdgeBuilder<'_> {
         let id = format!("e{}", self.next_edge);
         self.next_edge += 1;
         self.edges.push(Edge {
             id,
             source: source.id.clone(),
             target: target.id.clone(),
+            exit: None,
+            entry: None,
         });
+        EdgeBuilder {
+            edge: self.edges.last_mut().expect("just pushed"),
+        }
     }
 
     /// Serialize the diagram to a `.drawio` XML string with
@@ -313,13 +383,23 @@ impl Diagram {
         }
 
         for e in &self.edges {
+            let mut style = String::from(
+                "edgeStyle=orthogonalEdgeStyle;html=0;endArrow=open;startArrow=none;rounded=0;",
+            );
+            if let Some((x, y)) = e.exit {
+                let _ = write!(style, "exitX={x};exitY={y};exitDx=0;exitDy=0;");
+            }
+            if let Some((x, y)) = e.entry {
+                let _ = write!(style, "entryX={x};entryY={y};entryDx=0;entryDy=0;");
+            }
             let _ = writeln!(
                 out,
                 "        <mxCell id=\"{id}\" edge=\"1\" parent=\"1\" source=\"{s}\" target=\"{t}\" \
-                 style=\"edgeStyle=orthogonalEdgeStyle;html=0;endArrow=open;startArrow=none;rounded=0;\">",
+                 style=\"{style}\">",
                 id = escape(&e.id),
                 s = escape(&e.source),
                 t = escape(&e.target),
+                style = escape(&style),
             );
             out.push_str("          <mxGeometry relative=\"1\" as=\"geometry\"/>\n");
             out.push_str("        </mxCell>\n");
@@ -392,6 +472,42 @@ mod tests {
         assert!(xml.contains("id=\"lam\""));
         assert!(xml.contains("source=\"api\" target=\"lam\""));
         assert!(xml.contains("compressed=\"false\""));
+    }
+
+    #[test]
+    fn connect_returns_builder_emitting_exit_entry_attrs() {
+        let mut d = Diagram::new("t");
+        let a = d.add_node(aws::api_gateway("api", "API").at(0.0, 0.0));
+        let b = d.add_node(aws::lambda("lam", "Lambda").at(300.0, 0.0));
+        d.connect(&a, &b).exit(1.0, 0.5).entry(0.0, 0.5);
+        let xml = d.to_xml();
+        assert!(xml.contains("exitX=1;exitY=0.5"), "{xml}");
+        assert!(xml.contains("entryX=0;entryY=0.5"), "{xml}");
+    }
+
+    #[test]
+    fn connect_without_builder_calls_omits_entry_exit_keys() {
+        let mut d = Diagram::new("t");
+        let a = d.add_node(aws::api_gateway("api", "API").at(0.0, 0.0));
+        let b = d.add_node(aws::lambda("lam", "Lambda").at(300.0, 0.0));
+        // Legacy form: no chained builder calls. Must compile and must
+        // NOT emit any exit/entry attributes.
+        d.connect(&a, &b);
+        let xml = d.to_xml();
+        assert!(!xml.contains("exitX="), "{xml}");
+        assert!(!xml.contains("entryX="), "{xml}");
+    }
+
+    #[test]
+    fn edge_builder_clamps_out_of_range_values() {
+        let mut d = Diagram::new("t");
+        let a = d.add_node(aws::api_gateway("api", "API").at(0.0, 0.0));
+        let b = d.add_node(aws::lambda("lam", "Lambda").at(300.0, 0.0));
+        d.connect(&a, &b).exit(1.7, -0.4).entry(2.0, 0.0);
+        let xml = d.to_xml();
+        // 1.7 -> 1, -0.4 -> 0, 2.0 -> 1.
+        assert!(xml.contains("exitX=1;exitY=0;"), "{xml}");
+        assert!(xml.contains("entryX=1;entryY=0;"), "{xml}");
     }
 
     #[test]
