@@ -6,12 +6,31 @@
 //!    Rust structs. Transparently inflates compressed `<diagram>` payloads
 //!    (the default in interactively-saved drawio files) via [`inflate`].
 //! 2. For each vertex: parse its style with [`style::StyleMap`].
-//! 3. For each AWS resource-icon vertex: look up its stencil glyph in the
-//!    bundled [`stencil::StencilLibrary`] and emit SVG.
+//! 3. For each vertex bound to a known stencil library (AWS / Azure / GCP /
+//!    Kubernetes): resolve the glyph against the matching bundled
+//!    [`stencil::StencilLibrary`] and emit SVG.
 //! 4. For each edge: route between the picked connection points. Edges
 //!    declaring `edgeStyle=orthogonalEdgeStyle` render as a two-segment
 //!    right-angle polyline (one corner); other edges fall back to a
 //!    straight line. Endpoints carry a simple arrowhead.
+//!
+//! Stencil library coverage
+//! ------------------------
+//! Four libraries are bundled at compile time as static strings:
+//!
+//! - `mxgraph.aws4` from `stencils/aws4.xml` (AWS).
+//! - `mxgraph.azure` from `stencils/azure.xml`.
+//! - `mxgraph.gcp` from `stencils/gcp.xml` (concatenated category files,
+//!   wrapped in a synthetic root).
+//! - `mxgraph.kubernetes` from `stencils/kubernetes.xml`.
+//!
+//! Each library is parsed lazily via its own [`OnceLock`].
+//!
+//! Render fidelity is not 1:1 with the upstream drawio app. Azure and GCP
+//! shapes lean heavily on stencil DSL commands that this renderer does not
+//! yet implement (`<arc>`, `<save>`/`<restore>`, `<alpha>`, `<strokecolor>`,
+//! `<fillcolor>` — tracked in issue #7). Those commands are silently
+//! skipped, so a shape's outer silhouette may render with reduced detail.
 
 pub mod inflate;
 pub mod model;
@@ -22,12 +41,19 @@ use std::fmt::Write as _;
 use std::sync::OnceLock;
 
 use crate::model::{Edge, Model, Vertex};
-use crate::stencil::{StencilLibrary, render_stencil_to_svg};
+use crate::stencil::{Stencil, StencilLibrary, render_stencil_to_svg};
 use crate::style::{EdgeEndpoints, StyleMap, parse_points};
 
 /// Bundled AWS stencil source (about 6 MB). Lives at compile time so the
 /// library is self-contained.
 const AWS4_STENCIL: &str = include_str!("../../../stencils/aws4.xml");
+/// Bundled Azure stencil source.
+const AZURE_STENCIL: &str = include_str!("../../../stencils/azure.xml");
+/// Bundled GCP stencil source. Concatenation of upstream category files
+/// under a synthetic `<gcp-libraries>` root — see `stencils/SOURCE-gcp`.
+const GCP_STENCIL: &str = include_str!("../../../stencils/gcp.xml");
+/// Bundled Kubernetes stencil source.
+const KUBERNETES_STENCIL: &str = include_str!("../../../stencils/kubernetes.xml");
 
 #[derive(Debug, thiserror::Error)]
 pub enum RenderError {
@@ -43,11 +69,76 @@ pub enum RenderError {
     UnsupportedStencilCmd(String),
 }
 
-/// One-shot global library so we don't reparse the 6 MB stencil file each
-/// call. Internally lazy.
+/// One-shot global libraries so we don't reparse the multi-MB stencil
+/// files on every call. Internally lazy.
 fn aws4() -> &'static StencilLibrary {
     static LIB: OnceLock<StencilLibrary> = OnceLock::new();
-    LIB.get_or_init(|| StencilLibrary::from_xml(AWS4_STENCIL).expect("bundled aws4.xml must parse"))
+    LIB.get_or_init(|| {
+        StencilLibrary::from_xml(AWS4_STENCIL, "mxgraph.aws4").expect("bundled aws4.xml must parse")
+    })
+}
+
+fn azure() -> &'static StencilLibrary {
+    static LIB: OnceLock<StencilLibrary> = OnceLock::new();
+    LIB.get_or_init(|| {
+        StencilLibrary::from_xml(AZURE_STENCIL, "mxgraph.azure")
+            .expect("bundled azure.xml must parse")
+    })
+}
+
+fn gcp() -> &'static StencilLibrary {
+    static LIB: OnceLock<StencilLibrary> = OnceLock::new();
+    LIB.get_or_init(|| {
+        StencilLibrary::from_xml(GCP_STENCIL, "mxgraph.gcp").expect("bundled gcp.xml must parse")
+    })
+}
+
+fn kubernetes() -> &'static StencilLibrary {
+    static LIB: OnceLock<StencilLibrary> = OnceLock::new();
+    LIB.get_or_init(|| {
+        StencilLibrary::from_xml(KUBERNETES_STENCIL, "mxgraph.kubernetes")
+            .expect("bundled kubernetes.xml must parse")
+    })
+}
+
+/// Identifier for one of the bundled stencil libraries; returned by
+/// [`resolve_stencil`] so the caller can pick a glyph colour or label
+/// styling appropriate to that library.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LibraryKind {
+    Aws4,
+    Azure,
+    Gcp,
+    Kubernetes,
+}
+
+/// Inspect a vertex's parsed style and, if it refers to a known stencil
+/// library, return the matching glyph plus an identifier for the library.
+///
+/// Dispatches across the four bundled libraries:
+/// - `shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.<key>` → AWS.
+/// - `shape=mxgraph.kubernetes.icon2;prIcon=<key>` → Kubernetes.
+/// - `shape=mxgraph.azure.<key>` → Azure (direct stencil reference).
+/// - `shape=mxgraph.gcp.<category>.<key>` → GCP.
+fn resolve_stencil(style: &StyleMap) -> Option<(&'static Stencil, LibraryKind)> {
+    let shape = style.get("shape")?;
+    if shape == "mxgraph.aws4.resourceIcon" {
+        let res_icon = style.get("resIcon")?;
+        return aws4().lookup(res_icon).map(|s| (s, LibraryKind::Aws4));
+    }
+    if shape == "mxgraph.kubernetes.icon2" {
+        let pr_icon = style.get("prIcon")?;
+        return kubernetes()
+            .lookup(pr_icon)
+            .map(|s| (s, LibraryKind::Kubernetes));
+    }
+    if shape.starts_with("mxgraph.azure.") {
+        return azure().lookup(shape).map(|s| (s, LibraryKind::Azure));
+    }
+    if shape.starts_with("mxgraph.gcp.") {
+        return gcp().lookup(shape).map(|s| (s, LibraryKind::Gcp));
+    }
+    None
 }
 
 /// Render a `.drawio` XML string to SVG.
@@ -164,23 +255,54 @@ fn render_vertex(out: &mut String, v: &Vertex) {
     let font_color = style.get_or("fontColor", "#232F3E");
 
     if shape == "mxgraph.aws4.resourceIcon" {
-        // Coloured tile.
+        // AWS resource-icon: coloured tile + white glyph from stencil.
         let _ = write!(
             out,
             "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{fill}\" \
              stroke=\"none\" rx=\"3\" ry=\"3\"/>",
             v.x, v.y, v.w, v.h
         );
-        // Glyph from stencil.
-        if let Some(res_icon) = style.get("resIcon")
-            && let Some(stencil) = aws4().lookup(res_icon)
-        {
+        if let Some((stencil, _)) = resolve_stencil(&style) {
             out.push_str(&render_stencil_to_svg(
                 stencil, v.x, v.y, v.w, v.h, 0.18, "#ffffff",
             ));
         }
+    } else if let Some((stencil, kind)) = resolve_stencil(&style) {
+        match kind {
+            LibraryKind::Kubernetes => {
+                // K8s shapes are drawn inside a filled hexagon-ish tile via
+                // `mxgraph.kubernetes.icon2`. Approximate as a filled rect
+                // (using the declared fillColor) with a white glyph on top.
+                let tile_fill = style.get_or("fillColor", "#2875E2");
+                let _ = write!(
+                    out,
+                    "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" \
+                     fill=\"{tile_fill}\" stroke=\"none\" rx=\"4\" ry=\"4\"/>",
+                    v.x, v.y, v.w, v.h
+                );
+                out.push_str(&render_stencil_to_svg(
+                    stencil, v.x, v.y, v.w, v.h, 0.18, "#ffffff",
+                ));
+            }
+            LibraryKind::Azure | LibraryKind::Gcp => {
+                // Azure and GCP stencils declare their geometry directly
+                // (no surrounding tile). The fillColor in the style is the
+                // glyph colour; default to the canonical Azure cyan / GCP
+                // blue if the diagram omits it.
+                let default = if kind == LibraryKind::Azure {
+                    "#00BEF2"
+                } else {
+                    "#4285F4"
+                };
+                let glyph = style.get_or("fillColor", default);
+                out.push_str(&render_stencil_to_svg(
+                    stencil, v.x, v.y, v.w, v.h, 0.04, glyph,
+                ));
+            }
+            LibraryKind::Aws4 => unreachable!("aws4 handled above"),
+        }
     } else {
-        // Plain rect fallback.
+        // Plain rect fallback for unknown shapes.
         let _ = write!(
             out,
             "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{fill}\" \

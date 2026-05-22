@@ -12,7 +12,12 @@ crates/
   cli/      binary `drawio-headless`: file/stdin -> SVG file/stdout
   closed-loop-test/  integration test crate
 stencils/
-  aws4.xml  vendored from jgraph/drawio (see stencils/SOURCE)
+  aws4.xml         vendored from jgraph/drawio (see stencils/SOURCE)
+  azure.xml        vendored from jgraph/drawio (see stencils/SOURCE-azure)
+  gcp.xml          concatenated upstream category files
+                   (see stencils/SOURCE-gcp)
+  kubernetes.xml   vendored from jgraph/drawio
+                   (see stencils/SOURCE-kubernetes)
 ```
 
 ## Usage
@@ -29,8 +34,21 @@ d.connect(&api, &lam);
 let xml: String = d.to_xml();
 ```
 
+Four curated catalogues are exposed: `aws`, `azure`, `gcp`, `k8s`. Each
+emits the canonical drawio style strings for its library, so the
+resulting `.drawio` files round-trip through the upstream editor:
+
+```rust
+use drawio_author::{Diagram, azure, gcp, k8s};
+
+let mut d = Diagram::new("PolyCloud");
+d.add_node(azure::sql_database("db", "Orders").at(80.0, 80.0));
+d.add_node(gcp::bigquery("bq", "Warehouse").at(240.0, 80.0));
+d.add_node(k8s::pod("p", "frontend").at(400.0, 80.0));
+```
+
 `Node::raw(id, x, y, w, h, label, style)` is the low-level escape hatch for
-shapes outside the curated catalog.
+shapes outside the curated catalogues.
 
 ### Library: render to SVG
 
@@ -67,35 +85,60 @@ The `author` subcommand reads a small declarative JSON schema and emits a
 The JSON path is a thin frontend over the library: feeding either path the
 same logical diagram produces byte-identical `.drawio` output.
 
-## Scope (v0)
+## Scope
 
-- Authoring: a curated catalogue of ~30 AWS resource-icon factories,
-  plus the generic `Node::raw` escape hatch:
-  - **Application Integration**: `api_gateway`, `sqs`, `sns`,
-    `eventbridge`, `step_functions`, `appsync`
-  - **Compute**: `lambda`, `ec2`, `ecs`, `eks`, `fargate`, `app_runner`,
-    `batch`
-  - **Database**: `dynamodb`, `rds`, `elasticache`
-  - **Storage**: `s3`, `efs`
-  - **Networking & Content Delivery**: `cloudfront`, `route_53`, `vpc`,
-    `elastic_load_balancing`
-  - **Security, Identity & Compliance**: `iam`, `cognito`,
-    `secrets_manager`, `kms`
-  - **Analytics**: `kinesis`, `athena`, `msk`
-  - **Management & Governance**: `cloudwatch`
+- **Authoring catalogues**, all built on a shared `Node` / `Diagram` model:
+  - `aws` — ~30 AWS resource-icon factories plus group containers
+    (`AwsAccount`, `AwsVpc`, `AwsCloud`):
+    - **Application Integration**: `api_gateway`, `sqs`, `sns`,
+      `eventbridge`, `step_functions`, `appsync`
+    - **Compute**: `lambda`, `ec2`, `ecs`, `eks`, `fargate`,
+      `app_runner`, `batch`
+    - **Database**: `dynamodb`, `rds`, `elasticache`
+    - **Storage**: `s3`, `efs`
+    - **Networking & Content Delivery**: `cloudfront`, `route_53`,
+      `vpc`, `elastic_load_balancing`
+    - **Security, Identity & Compliance**: `iam`, `cognito`,
+      `secrets_manager`, `kms`
+    - **Analytics**: `kinesis`, `athena`, `msk`
+    - **Management & Governance**: `cloudwatch`
+  - `azure` — 15 legacy Azure shapes (Active Directory, SQL Database,
+    Service Bus, Storage Blob, Virtual Machine, Traffic Manager, …).
+  - `gcp` — 15 GCP shapes across compute, storage, big_data,
+    networking, identity_and_security, and management_tools.
+  - `k8s` — 10 core Kubernetes primitives (Pod, Deployment, Service,
+    Ingress, ConfigMap, Secret, Namespace, Node, PV, ReplicaSet).
+  - Generic `Node::raw` escape hatch for shapes outside any catalogue.
 - Emits plain XML (`compressed="false"`); labels are plain text
   (`html=0`).
-- Rendering: parses `mxCell` vertices and edges and the
-  `mxgraph.aws4.resourceIcon` shape. Falls back to a plain coloured rect
-  for unrecognised shapes.
-- Stencil engine: supports the `<path>`, `<move>`, `<line>`, `<curve>`,
+- **Rendering**: parses `mxCell` vertices and edges. Resolves the
+  vertex's stencil glyph via four bundled stencil libraries — AWS,
+  Azure, GCP, Kubernetes — selected from the shape's library prefix.
+  Falls back to a plain coloured rect for unrecognised shapes.
+- **Stencil engine**: supports `<path>`, `<move>`, `<line>`, `<curve>`,
   `<quad>`, `<close/>`, `<fill/>`, `<stroke/>`, `<fillstroke/>`,
-  `<ellipse>`, `<rect>` and `<roundrect>` commands.
-- Edges: straight line between bounding-box midpoints with a simple
-  arrowhead. No orthogonal routing yet.
+  `<ellipse>`, `<rect>` and `<roundrect>`. Other commands (`<arc>`,
+  `<save>`/`<restore>`, `<alpha>`, `<strokecolor>`, `<fillcolor>`, …)
+  are silently skipped — see issue #7.
+- Edges: orthogonal two-segment routing for
+  `edgeStyle=orthogonalEdgeStyle`; straight line otherwise. Endpoints
+  snap to declared `points=[…]` connection-point constraints.
 - Compressed `<diagram>` payloads (the drawio editor's default on save)
   are inflated transparently — `render()` accepts both compressed and
   uncompressed `.drawio` files.
+
+### Render fidelity per library
+
+| Library | Glyph fidelity | Notes |
+| ------- | -------------- | ----- |
+| AWS     | High            | Stencils use only `<path>`-family commands the engine fully supports. |
+| Kubernetes | Good         | Same path-only stencil set; tiles render with their canonical blue fill and white glyph. |
+| Azure   | Low             | Heavy use of `<arc>` for every silhouette; rendered shapes are skeletal until issue #7 is closed. |
+| GCP     | Medium          | Outer hexagon silhouette renders correctly; interior detail relies on `<save>`/`<alpha>`/`<arc>` which are skipped today. |
+
+Style strings emitted by the authoring layer are correct in all four
+cases and round-trip through the upstream drawio editor with full
+fidelity. The fidelity caveats only apply to the headless rasteriser.
 
 ## Development
 
@@ -125,6 +168,8 @@ artifact location.
 
 ## License
 
-Apache-2.0. The vendored stencil (`stencils/aws4.xml`) is from
-[jgraph/drawio](https://github.com/jgraph/drawio), also Apache-2.0;
-see `stencils/SOURCE` for the exact commit.
+Apache-2.0. The vendored stencils under `stencils/` are from
+[jgraph/drawio](https://github.com/jgraph/drawio), also Apache-2.0.
+See `stencils/SOURCE`, `stencils/SOURCE-azure`, `stencils/SOURCE-gcp`,
+and `stencils/SOURCE-kubernetes` for the exact upstream paths and
+commit hash.

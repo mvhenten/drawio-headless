@@ -1,0 +1,10 @@
+kubernetes.xml vendored from jgraph/drawio
+Repo:   https://github.com/jgraph/drawio
+Path:   src/main/webapp/stencils/kubernetes.xml
+Commit: 1d9b73f0017c3089a49f4957698efc5c76f00e1f
+License: Apache-2.0 (see upstream LICENSE)
+
+Note: an alternative `kubernetes2.xml` exists upstream alongside this
+file; we vendor `kubernetes.xml` since that is the set referenced by
+the canonical Kubernetes sidebar (`Sidebar-Kubernetes.js`) via the
+`shape=mxgraph.kubernetes.icon2;prIcon=<key>` indirection.
