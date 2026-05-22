@@ -7,6 +7,9 @@
 //! that downstream tools (e.g. the `drawio-render` crate) can read directly.
 
 pub mod aws;
+pub mod azure;
+pub mod gcp;
+pub mod k8s;
 
 use std::fmt::Write as _;
 
