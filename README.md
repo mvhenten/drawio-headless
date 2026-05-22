@@ -148,6 +148,25 @@ cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
+These three commands also run as parallel jobs on every PR via
+`.github/workflows/ci.yml`; PRs cannot merge with a red build.
+
+### Demo page
+
+The live demo at <https://mvhenten.github.io/drawio-headless/> is
+deployed by `.github/workflows/pages.yml` on every push to `main`.
+The workflow regenerates `docs/examples/*.svg` from the example
+sources in `crates/examples/examples/` and uploads `docs/` as the
+Pages artefact, so the published page is always in lockstep with
+the code on `main` — the SVGs are **not** committed to the repo.
+
+To preview locally:
+
+```sh
+./scripts/build-examples.sh   # regenerates docs/examples/*.svg
+open docs/index.html          # any static server / browser works
+```
+
 The closed-loop test (`crates/closed-loop-test/tests/closed_loop.rs`) writes
 artifacts to `target/test-output/`:
 `api-lambda.drawio`, `api-lambda.svg`, `api-lambda.png`.
