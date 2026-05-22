@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>drawio-headless — worked examples</title>
+<style>
+  :root {
+    --fg: #1d1f24;
+    --muted: #5a6470;
+    --accent: #232F3E;
+    --border: #e5e7eb;
+    --code-bg: #f6f7f9;
+  }
+  html { box-sizing: border-box; }
+  *, *::before, *::after { box-sizing: inherit; }
+  body {
+    margin: 0;
+    font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    color: var(--fg);
+    background: #fff;
+  }
+  main {
+    max-width: 1024px;
+    margin: 0 auto;
+    padding: 2rem 1.25rem 4rem;
+  }
+  header.site {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 1rem;
+    margin-bottom: 2.5rem;
+  }
+  header.site h1 {
+    margin: 0 0 .35rem;
+    font-size: 1.75rem;
+    letter-spacing: -.01em;
+  }
+  header.site p {
+    margin: 0;
+    color: var(--muted);
+  }
+  header.site code {
+    background: var(--code-bg);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: .9em;
+  }
+  section.intro {
+    margin-bottom: 3rem;
+  }
+  section.intro p {
+    margin: 0 0 1rem;
+  }
+  section.example {
+    margin-bottom: 3.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+  }
+  section.example:first-of-type {
+    border-top: 0;
+    padding-top: 0;
+  }
+  section.example h2 {
+    margin: 0 0 .5rem;
+    font-size: 1.4rem;
+    letter-spacing: -.005em;
+  }
+  section.example p.lead {
+    margin: 0 0 1.5rem;
+    color: var(--muted);
+  }
+  .diagram {
+    margin: 1.25rem 0 1.5rem;
+    padding: 1rem;
+    background: var(--code-bg);
+    border-radius: 8px;
+    text-align: center;
+  }
+  .diagram img {
+    max-width: 100%;
+    height: auto;
+  }
+  details {
+    margin: 1rem 0 .5rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+  }
+  details summary {
+    cursor: pointer;
+    padding: .55rem .85rem;
+    font-weight: 600;
+    color: var(--accent);
+    user-select: none;
+  }
+  details[open] summary {
+    border-bottom: 1px solid var(--border);
+  }
+  pre {
+    margin: 0;
+    padding: 1rem;
+    background: var(--code-bg);
+    border-radius: 0 0 6px 6px;
+    overflow-x: auto;
+    font: 13.5px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  .actions {
+    font-size: .9rem;
+    color: var(--muted);
+  }
+  .actions a {
+    color: var(--accent);
+    text-decoration: none;
+    margin-right: 1rem;
+  }
+  .actions a:hover {
+    text-decoration: underline;
+  }
+  footer {
+    margin-top: 4rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--border);
+    font-size: .9rem;
+    color: var(--muted);
+  }
+  footer a { color: var(--accent); }
+  @media (max-width: 540px) {
+    main { padding: 1.25rem .9rem 3rem; }
+    header.site h1 { font-size: 1.4rem; }
+    section.example h2 { font-size: 1.2rem; }
+  }
+</style>
+</head>
+<body>
+<main>
+
+<header class="site">
+  <h1>drawio-headless</h1>
+  <p>Author and render <code>.drawio</code> diagrams in Rust. No browser, no DOM, no Node.</p>
+</header>
+
+<section class="intro">
+  <p>
+    <strong>drawio-headless</strong> is a small Rust workspace that lets you build
+    drawio-compatible architecture diagrams from a programmatic API and render them
+    straight to SVG &mdash; no Chromium, no Electron, no Puppeteer. The on-disk
+    <code>.drawio</code> XML is identical to what <a href="https://app.diagrams.net/">app.diagrams.net</a>
+    consumes, so authored documents are interoperable in both directions.
+  </p>
+  <p>
+    The three worked examples below are each produced by a single Rust file under
+    <a href="https://github.com/mvhenten/drawio-headless/tree/main/crates/examples/examples"><code>crates/examples/examples/</code></a>.
+    Running the example writes the <code>.drawio</code> source and the rendered <code>.svg</code> into this
+    <code>docs/examples/</code> directory; the page just embeds those files inline.
+  </p>
+</section>
+
+<section class="example" id="petshop">
+  <h2>1. Pet shop e-commerce</h2>
+  <p class="lead">
+    CloudFront fronts both an API Gateway and a static image bucket on S3. The
+    gateway invokes a Lambda that writes orders to DynamoDB and pushes async
+    work onto an SQS queue. This is the bread-and-butter API: every service
+    is a single tile and edges connect them midpoint to midpoint.
+  </p>
+  <div class="diagram">
+    <img src="examples/petshop.svg" alt="Pet shop e-commerce architecture: CloudFront in front of API Gateway and an S3 image bucket; API Gateway invokes a Lambda that writes to DynamoDB and enqueues to SQS.">
+  </div>
+  <div class="actions">
+    <a href="examples/petshop.drawio">Download .drawio</a>
+    <a href="examples/petshop.svg">Download SVG</a>
+    <a href="https://github.com/mvhenten/drawio-headless/blob/main/crates/examples/examples/petshop.rs">Source: petshop.rs</a>
+  </div>
+  <details>
+    <summary>Show petshop.rs</summary>
+<pre><code>use drawio_author::{Diagram, aws};
+
+fn main() -&gt; std::io::Result&lt;()&gt; {
+    let mut d = Diagram::new("Pet shop e-commerce");
+
+    let cdn = d.add_node(aws::cloudfront("cdn", "CloudFront").at(80.0, 120.0));
+    let images = d.add_node(aws::s3("images", "S3 (images)").at(80.0, 360.0));
+    let api = d.add_node(aws::api_gateway("api", "API Gateway").at(320.0, 120.0));
+    let fn_orders = d.add_node(aws::lambda("fn", "Order Lambda").at(560.0, 120.0));
+    let ddb = d.add_node(aws::dynamodb("ddb", "DynamoDB").at(800.0, 120.0));
+    let queue = d.add_node(aws::sqs("queue", "Order queue").at(560.0, 360.0));
+
+    d.connect(&amp;cdn, &amp;api);
+    d.connect(&amp;cdn, &amp;images);
+    d.connect(&amp;api, &amp;fn_orders);
+    d.connect(&amp;fn_orders, &amp;ddb);
+    d.connect(&amp;fn_orders, &amp;queue);
+
+    drawio_headless_examples::write_artifacts("petshop", &amp;d)
+}
+</code></pre>
+  </details>
+</section>
+
+<section class="example" id="cross-account">
+  <h2>2. Cross-account VPC link</h2>
+  <p class="lead">
+    A Lambda in <em>Account A</em> consumes an MSK stream that lives in
+    <em>Account B</em> by assuming an IAM role across the account boundary.
+    Each account is rendered as a dashed AWS-account container &mdash; the new
+    <code>GroupKind::AwsAccount</code> primitive that landed alongside this demo.
+  </p>
+  <div class="diagram">
+    <img src="examples/cross-account.svg" alt="Cross-account VPC link: a Lambda inside the Account A dashed container connects to an IAM AssumeRole and an MSK cluster inside the Account B dashed container.">
+  </div>
+  <div class="actions">
+    <a href="examples/cross-account.drawio">Download .drawio</a>
+    <a href="examples/cross-account.svg">Download SVG</a>
+    <a href="https://github.com/mvhenten/drawio-headless/blob/main/crates/examples/examples/cross_account.rs">Source: cross_account.rs</a>
+  </div>
+  <details>
+    <summary>Show cross_account.rs</summary>
+<pre><code>use drawio_author::{Diagram, GroupKind, GroupOpts, aws};
+
+fn main() -&gt; std::io::Result&lt;()&gt; {
+    let mut d = Diagram::new("Cross-account VPC link");
+
+    d.add_group(GroupOpts::new(
+        "acct-a",
+        "Account A — consumer",
+        60.0, 60.0, 420.0, 360.0,
+        GroupKind::AwsAccount,
+    ));
+    d.add_group(GroupOpts::new(
+        "acct-b",
+        "Account B — streaming",
+        540.0, 60.0, 460.0, 360.0,
+        GroupKind::AwsAccount,
+    ));
+
+    let consumer = d.add_node(aws::lambda("consumer", "Stream consumer").at(220.0, 200.0));
+    let role = d.add_node(aws::iam("role", "AssumeRole").at(620.0, 130.0));
+    let kafka = d.add_node(aws::msk("kafka", "MSK cluster").at(820.0, 200.0));
+
+    d.connect(&amp;consumer, &amp;role);
+    d.connect(&amp;role, &amp;kafka);
+    d.connect(&amp;consumer, &amp;kafka);
+
+    drawio_headless_examples::write_artifacts("cross-account", &amp;d)
+}
+</code></pre>
+  </details>
+</section>
+
+<section class="example" id="event-driven">
+  <h2>3. Event-driven image processing</h2>
+  <p class="lead">
+    An S3 upload triggers a Lambda that resizes the image, writes metadata
+    to DynamoDB, and publishes a completion notification to SNS. The topology
+    fans out from a single producer to two independent consumers &mdash; a
+    different shape from example 1's linear chain.
+  </p>
+  <div class="diagram">
+    <img src="examples/event-driven.svg" alt="Event-driven image processing: an S3 bucket triggers a resize Lambda that writes to DynamoDB and publishes to an SNS topic.">
+  </div>
+  <div class="actions">
+    <a href="examples/event-driven.drawio">Download .drawio</a>
+    <a href="examples/event-driven.svg">Download SVG</a>
+    <a href="https://github.com/mvhenten/drawio-headless/blob/main/crates/examples/examples/event_driven.rs">Source: event_driven.rs</a>
+  </div>
+  <details>
+    <summary>Show event_driven.rs</summary>
+<pre><code>use drawio_author::{Diagram, aws};
+
+fn main() -&gt; std::io::Result&lt;()&gt; {
+    let mut d = Diagram::new("Event-driven image processing");
+
+    let uploads = d.add_node(aws::s3("uploads", "S3 (uploads)").at(320.0, 80.0));
+    let resize = d.add_node(aws::lambda("resize", "Resize Lambda").at(320.0, 280.0));
+    let metadata = d.add_node(aws::dynamodb("metadata", "Image metadata").at(140.0, 480.0));
+    let topic = d.add_node(aws::sns("topic", "Notifications").at(500.0, 480.0));
+
+    d.connect(&amp;uploads, &amp;resize);
+    d.connect(&amp;resize, &amp;metadata);
+    d.connect(&amp;resize, &amp;topic);
+
+    drawio_headless_examples::write_artifacts("event-driven", &amp;d)
+}
+</code></pre>
+  </details>
+</section>
+
+<footer>
+  Source on <a href="https://github.com/mvhenten/drawio-headless">github.com/mvhenten/drawio-headless</a>
+  &middot; <a href="https://github.com/mvhenten/drawio-headless/blob/main/docs/design.md">design doc</a>
+  &middot; Apache-2.0.
+</footer>
+
+</main>
+</body>
+</html>
