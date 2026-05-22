@@ -13,6 +13,12 @@ path = "src/lib.rs"
 [dependencies]
 quick-xml.workspace = true
 thiserror.workspace = true
+base64.workspace = true
+flate2.workspace = true
+percent-encoding.workspace = true
+
+[dev-dependencies]
+drawio-author.workspace = true
 
 [lints]
 workspace = true

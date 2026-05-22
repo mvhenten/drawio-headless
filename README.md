@@ -63,8 +63,9 @@ Authoring via the CLI is not in scope for v0.
   `<ellipse>`, `<rect>` and `<roundrect>` commands.
 - Edges: straight line between bounding-box midpoints with a simple
   arrowhead. No orthogonal routing yet.
-- Compressed payloads (`compressed="true"`) are rejected with a clear
-  error.
+- Compressed `<diagram>` payloads (the drawio editor's default on save)
+  are inflated transparently — `render()` accepts both compressed and
+  uncompressed `.drawio` files.
 
 ## Development
 
