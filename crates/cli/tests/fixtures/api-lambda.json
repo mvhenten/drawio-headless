@@ -1,0 +1,10 @@
+{
+  "name": "ApiLambda",
+  "nodes": [
+    {"id": "api", "kind": "aws.api_gateway", "label": "API Gateway", "x": 80, "y": 80},
+    {"id": "lam", "kind": "aws.lambda", "label": "Lambda", "x": 320, "y": 80}
+  ],
+  "edges": [
+    {"source": "api", "target": "lam"}
+  ]
+}
