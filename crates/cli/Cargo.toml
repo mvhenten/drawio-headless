@@ -11,12 +11,20 @@ description = "drawio-headless: render .drawio XML to SVG without a browser."
 name = "drawio-headless"
 path = "src/main.rs"
 
+[features]
+default = ["rasterize"]
+# PNG output via resvg + tiny-skia. Gate so a slim binary can be built with
+# `cargo build --no-default-features`.
+rasterize = ["dep:resvg", "dep:tiny-skia"]
+
 [dependencies]
 clap.workspace = true
 drawio-author.workspace = true
 drawio-render.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+resvg = { version = "0.43", optional = true }
+tiny-skia = { version = "0.11", optional = true }
 
 [lints]
 workspace = true

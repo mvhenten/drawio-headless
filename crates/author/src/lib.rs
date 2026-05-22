@@ -8,6 +8,7 @@
 
 pub mod aws;
 pub mod azure;
+pub mod catalogue;
 pub mod gcp;
 pub mod k8s;
 

@@ -210,8 +210,10 @@ dependencies = [
  "clap",
  "drawio-author",
  "drawio-render",
+ "resvg",
  "serde",
  "serde_json",
+ "tiny-skia",
 ]
 
 [[package]]
