@@ -5,6 +5,7 @@ members = [
     "crates/render",
     "crates/cli",
     "crates/closed-loop-test",
+    "crates/examples",
 ]
 
 [workspace.package]
