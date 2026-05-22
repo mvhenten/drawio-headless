@@ -171,9 +171,8 @@ mod tests {
 
     #[test]
     fn parses_edge_endpoints_from_style() {
-        let s = StyleMap::parse(
-            "edgeStyle=orthogonalEdgeStyle;exitX=1;exitY=0.5;entryX=0;entryY=0.5;",
-        );
+        let s =
+            StyleMap::parse("edgeStyle=orthogonalEdgeStyle;exitX=1;exitY=0.5;entryX=0;entryY=0.5;");
         let ep = EdgeEndpoints::from_style(&s);
         assert_eq!(ep.exit, Some((1.0, 0.5)));
         assert_eq!(ep.entry, Some((0.0, 0.5)));
