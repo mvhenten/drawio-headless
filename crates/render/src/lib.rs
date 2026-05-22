@@ -73,16 +73,57 @@ fn render_model(model: &Model) -> String {
          </marker></defs>",
     );
 
-    // Edges first (so vertices paint over edge endpoints).
-    for e in &model.edges {
-        render_edge(&mut svg, model, e);
+    // Z-order: groups first (boundary containers paint behind everything),
+    // then non-group vertices, then edges on top so connectors are visible
+    // crossing into group rectangles.
+    for v in &model.vertices {
+        if is_group(&v.style) {
+            render_group(&mut svg, v);
+        }
     }
     for v in &model.vertices {
-        render_vertex(&mut svg, v);
+        if !is_group(&v.style) {
+            render_vertex(&mut svg, v);
+        }
+    }
+    for e in &model.edges {
+        render_edge(&mut svg, model, e);
     }
 
     svg.push_str("</svg>");
     svg
+}
+
+fn is_group(style: &str) -> bool {
+    StyleMap::parse(style).get("shape") == Some("mxgraph.aws4.group")
+}
+
+fn render_group(out: &mut String, v: &Vertex) {
+    let style = StyleMap::parse(&v.style);
+    let stroke = style.get_or("strokeColor", "#7D8998");
+    let font_color = style.get_or("fontColor", stroke);
+    let dashed = style.get("dashed").unwrap_or("1") != "0";
+    let dash_attr = if dashed {
+        " stroke-dasharray=\"6,4\""
+    } else {
+        ""
+    };
+    let _ = write!(
+        out,
+        "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"none\" \
+         stroke=\"{stroke}\" stroke-width=\"1.5\"{dash_attr} rx=\"6\" ry=\"6\"/>",
+        v.x, v.y, v.w, v.h
+    );
+    if !v.label.is_empty() {
+        let lx = v.x + 14.0;
+        let ly = v.y + 20.0;
+        let _ = write!(
+            out,
+            "<text x=\"{lx}\" y=\"{ly}\" font-family=\"sans-serif\" font-size=\"13\" \
+             font-weight=\"600\" fill=\"{font_color}\" text-anchor=\"start\">{}</text>",
+            escape_text(&v.label)
+        );
+    }
 }
 
 fn compute_viewbox(model: &Model) -> (f64, f64, f64, f64) {
@@ -217,5 +258,32 @@ mod tests {
         let xml = r#"<mxfile compressed="true"><diagram>x</diagram></mxfile>"#;
         let err = render(xml).unwrap_err();
         assert!(matches!(err, RenderError::CompressedUnsupported));
+    }
+
+    #[test]
+    fn renders_group_as_dashed_rect() {
+        let xml = r#"
+<mxfile compressed="false"><diagram><mxGraphModel><root>
+<mxCell id="0"/><mxCell id="1" parent="0"/>
+<mxCell id="g" value="Account A" vertex="1" parent="1" style="shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_account;strokeColor=#CD2264;fontColor=#CD2264;dashed=1;fillColor=none;">
+  <mxGeometry x="40" y="40" width="320" height="200" as="geometry"/>
+</mxCell>
+<mxCell id="a" value="Lambda" vertex="1" parent="1" style="shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;fillColor=#ED7100;">
+  <mxGeometry x="120" y="120" width="78" height="78" as="geometry"/>
+</mxCell>
+</root></mxGraphModel></diagram></mxfile>"#;
+        let svg = render(xml).unwrap();
+        assert!(
+            svg.contains("stroke-dasharray"),
+            "group should be dashed: {svg}"
+        );
+        assert!(
+            svg.contains("Account A"),
+            "group label should appear: {svg}"
+        );
+        assert!(
+            svg.contains("stroke=\"#CD2264\""),
+            "group stroke colour: {svg}"
+        );
     }
 }

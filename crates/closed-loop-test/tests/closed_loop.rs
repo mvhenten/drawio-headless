@@ -12,7 +12,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use drawio_author::{Diagram, aws};
+use drawio_author::{Diagram, GroupKind, GroupOpts, aws};
 use resvg::usvg;
 
 fn out_dir() -> PathBuf {
@@ -133,6 +133,30 @@ fn closed_loop_author_render_rasterise() {
         orange_in_lambda_tile > 100,
         "expected AWS-orange pixels inside the Lambda tile, got {orange_in_lambda_tile}"
     );
+}
+
+#[test]
+fn group_boundary_renders_as_dashed_rect() {
+    let out = out_dir();
+    let mut diagram = Diagram::new("GroupBoundary");
+    diagram.add_group(GroupOpts::new(
+        "acct-a",
+        "Account A",
+        40.0,
+        40.0,
+        320.0,
+        200.0,
+        GroupKind::AwsAccount,
+    ));
+    diagram.add_node(aws::lambda("lam", "Lambda").at(100.0, 120.0));
+    diagram.add_node(aws::s3("s3", "Bucket").at(220.0, 120.0));
+    let xml = diagram.to_xml();
+    fs::write(out.join("group-boundary.drawio"), &xml).expect("write");
+    assert!(xml.contains("shape=mxgraph.aws4.group"));
+    let svg = drawio_render::render(&xml).expect("render");
+    fs::write(out.join("group-boundary.svg"), &svg).expect("write svg");
+    assert!(svg.contains("stroke-dasharray"), "dashed boundary: {svg}");
+    assert!(svg.contains("Account A"), "group label: {svg}");
 }
 
 /// Walk the raw RGB(A) image data. Return (non-background pixel count,
