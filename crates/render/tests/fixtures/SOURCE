@@ -1,0 +1,14 @@
+compressed-sample.drawio is vendored from jgraph/drawio (Apache-2.0):
+  path:   src/main/webapp/templates/cloud/aws/aws_1.xml
+  commit: 1d9b73f0017c3089a49f4957698efc5c76f00e1f
+  upstream: https://github.com/jgraph/drawio
+
+It is included unchanged. It is a real-world compressed `.drawio` file
+(no `compressed="false"` attribute, body is base64 + raw DEFLATE +
+URL-encoded `<mxGraphModel>` XML) and serves as an end-to-end smoke
+test for the inflate path.
+
+compressed-payload.txt is the verified inflate fixture from the
+issue brief — the `<diagram>` body (still URL-encoded by its
+surrounding mxfile envelope) of a 2-node API Gateway -> Lambda
+diagram.
