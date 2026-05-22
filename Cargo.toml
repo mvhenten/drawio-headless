@@ -19,6 +19,9 @@ repository = "https://github.com/mvhenten/drawio-headless"
 quick-xml = "0.36"
 thiserror = "1"
 clap = { version = "4", features = ["derive"] }
+base64 = "0.22"
+flate2 = "1"
+percent-encoding = "2"
 drawio-author = { path = "crates/author" }
 drawio-render = { path = "crates/render" }
 

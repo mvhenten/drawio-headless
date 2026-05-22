@@ -1,12 +1,15 @@
 //! Parse `mxfile/diagram/mxGraphModel/root/mxCell` into a small Rust model.
 //!
-//! We only deal with `compressed="false"` payloads. Cells with `id="0"` and
-//! `id="1"` (the implicit root and default layer) are skipped.
+//! Compressed `<diagram>` payloads (the drawio editor's default on save) are
+//! inflated transparently via [`crate::inflate`] before the XML walk.
+//! Cells with `id="0"` and `id="1"` (the implicit root and default layer)
+//! are skipped.
 
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 
 use crate::RenderError;
+use crate::inflate::{inflate_diagram_body, is_compressed_body};
 
 #[derive(Debug, Clone)]
 pub struct Vertex {
@@ -98,12 +101,15 @@ fn read_geometry(elem: &BytesStart<'_>) -> Result<Geometry, RenderError> {
 }
 
 /// Parse a drawio XML string into a [`Model`].
+///
+/// Compressed `<diagram>` bodies are inflated in place (base64 ->
+/// raw DEFLATE -> URL decode) before the structural walk.
 pub fn parse(xml: &str) -> Result<Model, RenderError> {
-    if has_compressed_attr(xml) {
-        return Err(RenderError::CompressedUnsupported);
-    }
+    // If any <diagram> body is compressed, expand it back into an inline
+    // <mxGraphModel> tree first, then parse the resulting XML uniformly.
+    let prepared = expand_compressed_diagrams(xml)?;
 
-    let mut reader = Reader::from_str(xml);
+    let mut reader = Reader::from_str(&prepared);
     reader.config_mut().trim_text(true);
     let mut buf = Vec::new();
     let mut model = Model::default();
@@ -197,8 +203,49 @@ fn apply_geometry(vertex: &mut Vertex, geom: Geometry) {
     vertex.h = geom.h;
 }
 
-fn has_compressed_attr(xml: &str) -> bool {
-    xml.contains("compressed=\"true\"") || xml.contains("compressed='true'")
+/// Walk `xml` and, for every `<diagram>...</diagram>` whose text body is
+/// compressed (base64-encoded raw DEFLATE of URL-encoded XML), substitute
+/// the inflated `<mxGraphModel>` payload in place. Returns the original
+/// string unchanged if every `<diagram>` already contains plain XML.
+fn expand_compressed_diagrams(xml: &str) -> Result<String, RenderError> {
+    let mut out = String::with_capacity(xml.len());
+    let mut cursor = 0usize;
+    let bytes = xml.as_bytes();
+
+    while let Some(open_rel) = find_subslice(&bytes[cursor..], b"<diagram") {
+        let open = cursor + open_rel;
+        // Find end of opening tag.
+        let Some(open_end_rel) = find_subslice(&bytes[open..], b">") else {
+            break;
+        };
+        let body_start = open + open_end_rel + 1;
+        // Find closing </diagram>.
+        let Some(close_rel) = find_subslice(&bytes[body_start..], b"</diagram>") else {
+            break;
+        };
+        let body_end = body_start + close_rel;
+
+        // Emit everything up to the body verbatim.
+        out.push_str(&xml[cursor..body_start]);
+
+        let body = &xml[body_start..body_end];
+        if is_compressed_body(body) {
+            let inflated = inflate_diagram_body(body)?;
+            out.push_str(&inflated);
+        } else {
+            out.push_str(body);
+        }
+
+        cursor = body_end;
+    }
+    out.push_str(&xml[cursor..]);
+    Ok(out)
+}
+
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 #[cfg(test)]
@@ -236,9 +283,10 @@ mod tests {
     }
 
     #[test]
-    fn rejects_compressed() {
-        let xml = r#"<mxfile compressed="true"><diagram>blob</diagram></mxfile>"#;
-        let err = parse(xml).unwrap_err();
-        assert!(matches!(err, RenderError::CompressedUnsupported));
+    fn passthrough_when_uncompressed() {
+        // No inflation should happen; the function is a no-op on the input.
+        let xml = r"<mxfile><diagram><mxGraphModel><root/></mxGraphModel></diagram></mxfile>";
+        let prepared = expand_compressed_diagrams(xml).unwrap();
+        assert_eq!(prepared, xml);
     }
 }

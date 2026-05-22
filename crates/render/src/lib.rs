@@ -3,7 +3,8 @@
 //! Pipeline (no browser, no DOM):
 //!
 //! 1. [`model::parse`] — read `mxfile/diagram/mxGraphModel/root/mxCell` into
-//!    Rust structs.
+//!    Rust structs. Transparently inflates compressed `<diagram>` payloads
+//!    (the default in interactively-saved drawio files) via [`inflate`].
 //! 2. For each vertex: parse its style with [`style::StyleMap`].
 //! 3. For each AWS resource-icon vertex: look up its stencil glyph in the
 //!    bundled [`stencil::StencilLibrary`] and emit SVG.
@@ -11,9 +12,8 @@
 //!    declaring `edgeStyle=orthogonalEdgeStyle` render as a two-segment
 //!    right-angle polyline (one corner); other edges fall back to a
 //!    straight line. Endpoints carry a simple arrowhead.
-//!
-//! Compressed payloads (`compressed="true"`) are rejected with a clear error.
 
+pub mod inflate;
 pub mod model;
 pub mod stencil;
 pub mod style;
@@ -33,8 +33,12 @@ const AWS4_STENCIL: &str = include_str!("../../../stencils/aws4.xml");
 pub enum RenderError {
     #[error("XML parse error: {0}")]
     Xml(String),
-    #[error("compressed diagram payloads are not yet supported; re-save with compressed=\"false\"")]
-    CompressedUnsupported,
+    #[error("base64 decode error: {0}")]
+    Base64Decode(#[from] base64::DecodeError),
+    #[error("DEFLATE inflate error: {0}")]
+    Inflate(#[from] std::io::Error),
+    #[error("URL decode error: {0}")]
+    UrlDecode(String),
     #[error("unsupported stencil command: {0}")]
     UnsupportedStencilCmd(String),
 }
@@ -330,13 +334,6 @@ mod tests {
         assert!(svg.starts_with("<svg"));
         assert!(svg.contains("<rect"));
         assert!(svg.contains("<path")); // stencil glyph rendered
-    }
-
-    #[test]
-    fn rejects_compressed_payload() {
-        let xml = r#"<mxfile compressed="true"><diagram>x</diagram></mxfile>"#;
-        let err = render(xml).unwrap_err();
-        assert!(matches!(err, RenderError::CompressedUnsupported));
     }
 
     #[test]
