@@ -7,8 +7,10 @@
 //! 2. For each vertex: parse its style with [`style::StyleMap`].
 //! 3. For each AWS resource-icon vertex: look up its stencil glyph in the
 //!    bundled [`stencil::StencilLibrary`] and emit SVG.
-//! 4. For each edge: draw a straight line between source/target midpoints
-//!    with a simple arrowhead.
+//! 4. For each edge: route between the picked connection points. Edges
+//!    declaring `edgeStyle=orthogonalEdgeStyle` render as a two-segment
+//!    right-angle polyline (one corner); other edges fall back to a
+//!    straight line. Endpoints carry a simple arrowhead.
 //!
 //! Compressed payloads (`compressed="true"`) are rejected with a clear error.
 
@@ -214,11 +216,57 @@ fn render_edge(out: &mut String, model: &Model, e: &Edge) {
     } else {
         " marker-end=\"url(#arrow)\""
     };
+
+    let orthogonal = style.get("edgeStyle") == Some("orthogonalEdgeStyle");
+    if orthogonal && let Some((mx, my)) = orthogonal_corner(src, (sx, sy), (tx, ty)) {
+        let _ = write!(
+            out,
+            "<path d=\"M {sx} {sy} L {mx} {my} L {tx} {ty}\" fill=\"none\" \
+             stroke=\"#232F3E\" stroke-width=\"1.5\"{marker_end}/>"
+        );
+        return;
+    }
+
     let _ = write!(
         out,
         "<line x1=\"{sx}\" y1=\"{sy}\" x2=\"{tx}\" y2=\"{ty}\" \
          stroke=\"#232F3E\" stroke-width=\"1.5\"{marker_end}/>"
     );
+}
+
+/// Compute the single corner of a two-segment right-angle route from
+/// `start` to `end`, given the cell `start` sits on.
+///
+/// The orientation of the leading segment is chosen by which side of the
+/// source cell the start endpoint lies on:
+/// - start on a vertical side (left/right): leave horizontally — corner is
+///   `(end.x, start.y)`.
+/// - start on a horizontal side (top/bottom): leave vertically — corner is
+///   `(start.x, end.y)`.
+///
+/// Returns `None` when the endpoints are colinear (same x or y) so the
+/// caller can degrade to a single straight segment. Also returns `None` if
+/// the start point is not on any edge of the source cell (e.g. it landed
+/// at the cell centre because no connection points were declared) — there
+/// is no sensible orientation to choose in that case.
+fn orthogonal_corner(src: &Vertex, start: (f64, f64), end: (f64, f64)) -> Option<(f64, f64)> {
+    // Colinear: a single segment is already the right-angle route.
+    if (start.0 - end.0).abs() < 1e-9 || (start.1 - end.1).abs() < 1e-9 {
+        return None;
+    }
+    let on_vertical_side =
+        (start.0 - src.x).abs() < 1e-6 || (start.0 - (src.x + src.w)).abs() < 1e-6;
+    let on_horizontal_side =
+        (start.1 - src.y).abs() < 1e-6 || (start.1 - (src.y + src.h)).abs() < 1e-6;
+    if on_vertical_side {
+        // Leave horizontally first.
+        Some((end.0, start.1))
+    } else if on_horizontal_side {
+        // Leave vertically first.
+        Some((start.0, end.1))
+    } else {
+        None
+    }
 }
 
 /// Choose the absolute coordinate of `cell`'s declared connection point
@@ -364,6 +412,142 @@ mod tests {
             h: 40.0,
         };
         assert!(pick_endpoint(&plain, (100.0, 100.0)).is_none());
+    }
+
+    #[test]
+    fn orthogonal_corner_horizontal_first_from_right_edge() {
+        // Source endpoint sits on the right edge of source (x = 78). The
+        // route must leave horizontally, so the corner is at (end.x, start.y).
+        let src = Vertex {
+            id: "a".into(),
+            label: String::new(),
+            style: String::new(),
+            x: 0.0,
+            y: 0.0,
+            w: 78.0,
+            h: 78.0,
+        };
+        let corner = orthogonal_corner(&src, (78.0, 39.0), (300.0, 100.0)).unwrap();
+        assert!(
+            (corner.0 - 300.0).abs() < 1e-9,
+            "corner.x = end.x: {corner:?}"
+        );
+        assert!(
+            (corner.1 - 39.0).abs() < 1e-9,
+            "corner.y = start.y: {corner:?}"
+        );
+    }
+
+    #[test]
+    fn orthogonal_corner_vertical_first_from_bottom_edge() {
+        // Source endpoint sits on the bottom edge of source (y = 78). The
+        // route must leave vertically, so the corner is at (start.x, end.y).
+        let src = Vertex {
+            id: "a".into(),
+            label: String::new(),
+            style: String::new(),
+            x: 0.0,
+            y: 0.0,
+            w: 78.0,
+            h: 78.0,
+        };
+        let corner = orthogonal_corner(&src, (39.0, 78.0), (200.0, 300.0)).unwrap();
+        assert!(
+            (corner.0 - 39.0).abs() < 1e-9,
+            "corner.x = start.x: {corner:?}"
+        );
+        assert!(
+            (corner.1 - 300.0).abs() < 1e-9,
+            "corner.y = end.y: {corner:?}"
+        );
+    }
+
+    #[test]
+    fn orthogonal_corner_colinear_endpoints_yield_none() {
+        let src = Vertex {
+            id: "a".into(),
+            label: String::new(),
+            style: String::new(),
+            x: 0.0,
+            y: 0.0,
+            w: 78.0,
+            h: 78.0,
+        };
+        // Same y: a single horizontal segment is already the route.
+        assert!(orthogonal_corner(&src, (78.0, 39.0), (300.0, 39.0)).is_none());
+        // Same x: a single vertical segment is already the route.
+        assert!(orthogonal_corner(&src, (39.0, 78.0), (39.0, 300.0)).is_none());
+    }
+
+    #[test]
+    fn orthogonal_corner_endpoint_not_on_edge_yields_none() {
+        // No declared connection points -> endpoint defaults to the cell
+        // centre, which sits on no edge. We have no orientation to pick.
+        let src = Vertex {
+            id: "a".into(),
+            label: String::new(),
+            style: String::new(),
+            x: 0.0,
+            y: 0.0,
+            w: 78.0,
+            h: 78.0,
+        };
+        assert!(orthogonal_corner(&src, (39.0, 39.0), (300.0, 100.0)).is_none());
+    }
+
+    #[test]
+    fn renders_orthogonal_edge_as_path_with_corner() {
+        // Two AWS resource icons offset both horizontally and vertically —
+        // the picker lands on A's right-mid and B's left-mid, so the
+        // route must bend.
+        let xml = r#"
+<mxfile compressed="false"><diagram><mxGraphModel><root>
+<mxCell id="0"/><mxCell id="1" parent="0"/>
+<mxCell id="a" value="A" vertex="1" parent="1" style="shape=mxgraph.aws4.resourceIcon;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];resIcon=mxgraph.aws4.lambda;fillColor=#ED7100;">
+  <mxGeometry x="0" y="0" width="78" height="78" as="geometry"/>
+</mxCell>
+<mxCell id="b" value="B" vertex="1" parent="1" style="shape=mxgraph.aws4.resourceIcon;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];resIcon=mxgraph.aws4.lambda;fillColor=#ED7100;">
+  <mxGeometry x="300" y="200" width="78" height="78" as="geometry"/>
+</mxCell>
+<mxCell id="e1" edge="1" parent="1" source="a" target="b" style="edgeStyle=orthogonalEdgeStyle;html=0;endArrow=open;rounded=0;">
+  <mxGeometry relative="1" as="geometry"/>
+</mxCell>
+</root></mxGraphModel></diagram></mxfile>"#;
+        let svg = render(xml).unwrap();
+        // The picker snaps A's endpoint to its bottom-right corner (78, 78)
+        // — the constraint nearest to B's centre (339, 239) — and B's
+        // endpoint to its top-left corner (300, 200). Source endpoint sits
+        // on the right edge of A (x = 78), so routing leaves horizontally:
+        // corner at (end.x, start.y) = (300, 78).
+        assert!(
+            svg.contains("<path d=\"M 78 78 L 300 78 L 300 200\""),
+            "expected orthogonal path; got: {svg}",
+        );
+    }
+
+    #[test]
+    fn straight_line_edge_when_edgestyle_missing() {
+        // No `edgeStyle=orthogonalEdgeStyle` in the edge style — keep
+        // the legacy straight-line behaviour.
+        let xml = r#"
+<mxfile compressed="false"><diagram><mxGraphModel><root>
+<mxCell id="0"/><mxCell id="1" parent="0"/>
+<mxCell id="a" value="A" vertex="1" parent="1" style="shape=mxgraph.aws4.resourceIcon;points=[[1,0.5,0]];resIcon=mxgraph.aws4.lambda;fillColor=#ED7100;">
+  <mxGeometry x="0" y="0" width="78" height="78" as="geometry"/>
+</mxCell>
+<mxCell id="b" value="B" vertex="1" parent="1" style="shape=mxgraph.aws4.resourceIcon;points=[[0,0.5,0]];resIcon=mxgraph.aws4.lambda;fillColor=#ED7100;">
+  <mxGeometry x="300" y="200" width="78" height="78" as="geometry"/>
+</mxCell>
+<mxCell id="e1" edge="1" parent="1" source="a" target="b" style="endArrow=open;rounded=0;">
+  <mxGeometry relative="1" as="geometry"/>
+</mxCell>
+</root></mxGraphModel></diagram></mxfile>"#;
+        let svg = render(xml).unwrap();
+        // No path-with-corner; the legacy <line> is emitted instead.
+        assert!(
+            svg.contains("<line x1=\"78\" y1=\"39\" x2=\"300\" y2=\"239\""),
+            "expected straight <line>; got: {svg}",
+        );
     }
 
     #[test]
