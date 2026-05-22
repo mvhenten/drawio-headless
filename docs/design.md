@@ -149,7 +149,15 @@ Unrecognised commands are silently skipped. A `RenderError::UnsupportedStencilCm
 
 ## v0 scope
 
-- **Authoring catalogue**: `api_gateway`, `lambda`, `s3`, `dynamodb`, `ec2`, plus `Node::raw` for everything else.
+- **Authoring catalogue**: ~30 curated AWS resource-icon factories grouped by category, plus `Node::raw` for everything else:
+  - Application Integration: `api_gateway`, `sqs`, `sns`, `eventbridge`, `step_functions`, `appsync`
+  - Compute: `lambda`, `ec2`, `ecs`, `eks`, `fargate`, `app_runner`, `batch`
+  - Database: `dynamodb`, `rds`, `elasticache`
+  - Storage: `s3`, `efs`
+  - Networking & Content Delivery: `cloudfront`, `route_53`, `vpc`, `elastic_load_balancing`
+  - Security, Identity & Compliance: `iam`, `cognito`, `secrets_manager`, `kms`
+  - Analytics: `kinesis`, `athena`, `msk`
+  - Management & Governance: `cloudwatch`
 - **Output format**: plain XML, `compressed="false"`, `html=0`.
 - **Rendered shapes**: `mxgraph.aws4.resourceIcon` (proper coloured tile + stencil glyph). Anything else falls back to a plain coloured rectangle with the label.
 - **Edges**: straight line between cell midpoints with a simple open arrowhead.
@@ -169,7 +177,7 @@ See `docs/sample-output.png`.
 
 No commitments on order or timeline.
 
-- **More AWS services** in the curated catalogue (target ~25 popular services).
+- **More AWS services** in the curated catalogue as needs surface (the v0 ~25-service target is met).
 - **Other stencil libraries**: Azure, GCP, Cisco, Kubernetes — vendor as additional XML files alongside `aws4.xml`.
 - **Orthogonal edge routing** (`edgeStyle=orthogonalEdgeStyle`).
 - **Connection-point snapping** (`entryX/exitX`).
