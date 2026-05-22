@@ -29,7 +29,8 @@ These are not "later"; they are "no":
 - **No pixel-perfect drawio parity**. "Renders" is the bar. Recognisable AWS icons, correct colours, sensible edges.
 - **No browser DOM in the core library**. Plain SVG is emitted; rasterisation is the consumer's problem.
 - **No foreignObject / HTML labels** (`html=1`). Authored documents use `html=0`.
-- **No editor UI**. Authoring is library-only.
+- **No editor UI**. Authoring is offered as a library API and a thin JSON
+  CLI; no graphical editor.
 
 ## Architecture
 
@@ -72,9 +73,18 @@ The split lets an LLM author a diagram, persist it as a `.drawio` document inter
 ```sh
 drawio-headless render input.drawio output.svg
 drawio-headless render --stdin > out.svg
+
+drawio-headless author input.json output.drawio
+drawio-headless author --stdin > out.drawio
 ```
 
-Thin wrapper. No business logic. Authoring via the CLI is out of scope for v0.
+Thin wrapper. No business logic in the renderer path; the `author` path is
+pure glue — JSON → `serde` structs → `drawio-author` library calls. The
+author library itself stays `serde`-free (zero JSON deps), and the JSON glue
+lives only in the CLI crate. Round-trip byte-equivalence between
+library-authored and CLI-authored diagrams is asserted in
+`crates/cli/tests/author.rs`. Schema reference:
+[`docs/authoring-schema.md`](authoring-schema.md).
 
 ### `closed-loop-test`
 
@@ -162,6 +172,9 @@ Unrecognised commands are silently skipped. A `RenderError::UnsupportedStencilCm
 - **Rendered shapes**: `mxgraph.aws4.resourceIcon` (proper coloured tile + stencil glyph). Anything else falls back to a plain coloured rectangle with the label.
 - **Edges**: straight line between cell midpoints with a simple open arrowhead.
 - **Stencil DSL**: the subset listed above.
+- **CLI authoring**: small flat JSON schema with named factories
+  (`aws.lambda`, `aws.api_gateway`, ...) and a `raw` escape hatch. See
+  [`docs/authoring-schema.md`](authoring-schema.md).
 
 ## Closed-loop measurements (v0 baseline)
 
@@ -181,7 +194,6 @@ No commitments on order or timeline.
 - **Other stencil libraries**: Azure, GCP, Cisco, Kubernetes — vendor as additional XML files alongside `aws4.xml`.
 - **Orthogonal edge routing** (`edgeStyle=orthogonalEdgeStyle`).
 - **Connection-point snapping** (`entryX/exitX`).
-- **Authoring via CLI** — input format TBD (small JSON/TOML schema likely).
 - **More mxStencil commands** as we encounter stencils that need them.
 - **Snapshot tests** with committed golden PNGs for visual regression.
 
