@@ -292,8 +292,13 @@ mod tests {
     }
 
     #[test]
-    fn edge_endpoints_snap_to_corner_constraints() {
-        let aws_style = "shape=mxgraph.aws4.resourceIcon;points=[[0,0,0],[1,0,0],[0,1,0],[1,1,0]];\
+    fn edge_endpoints_snap_to_perimeter_constraints() {
+        // Canonical 16-point AWS resource-icon constraint set: corners +
+        // 0.25/0.5/0.75 along every edge.
+        let aws_style = "shape=mxgraph.aws4.resourceIcon;\
+             points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],\
+             [0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],\
+             [0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];\
              resIcon=mxgraph.aws4.lambda;fillColor=#ED7100;";
         let a = Vertex {
             id: "a".into(),
@@ -324,6 +329,17 @@ mod tests {
         assert!(
             (b_end.0 - 300.0).abs() < 1e-9,
             "target endpoint x should be on B's left edge (300), got {b_end:?}",
+        );
+        // With the 16-point set, the right-mid (1, 0.5) is closest to B's
+        // centre — so the source endpoint lands at A's vertical midline
+        // (y = 39), not a corner.
+        assert!(
+            (a_end.1 - 39.0).abs() < 1e-9,
+            "source endpoint y should be A's right-mid (39), got {a_end:?}",
+        );
+        assert!(
+            (b_end.1 - 39.0).abs() < 1e-9,
+            "target endpoint y should be B's left-mid (39), got {b_end:?}",
         );
         // And both should NOT be at the cell midpoints (x = 39 / x = 339).
         assert!(

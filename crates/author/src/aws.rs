@@ -12,7 +12,9 @@ use crate::{DEFAULT_AWS_TILE, Node};
 /// `resIcon` identifier.
 fn res_icon_style(fill: &str, res_icon: &str) -> String {
     format!(
-        "sketch=0;points=[[0,0,0],[1,0,0],[0,1,0],[1,1,0]];\
+        "sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],\
+         [0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],\
+         [0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];\
          outlineConnect=0;fontColor=#232F3E;fillColor={fill};\
          strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;\
          verticalAlign=top;align=center;html=0;fontSize=12;aspect=fixed;\
@@ -113,10 +115,15 @@ mod tests {
             node.style,
         );
         assert!(node.style.contains("shape=mxgraph.aws4.resourceIcon"));
+        // Canonical 16-point AWS resource-icon constraint set: 5 along the
+        // top edge, 5 along the bottom, 3 interior on each vertical side.
         assert!(
-            node.style
-                .contains("points=[[0,0,0],[1,0,0],[0,1,0],[1,1,0]]"),
-            "missing connection points in style: {}",
+            node.style.contains(
+                "points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],\
+                 [0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],\
+                 [0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]]"
+            ),
+            "missing 16-point connection set in style: {}",
             node.style,
         );
     }
