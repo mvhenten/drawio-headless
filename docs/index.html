@@ -167,6 +167,7 @@
     <img src="examples/petshop.svg" alt="Pet shop e-commerce architecture: CloudFront in front of API Gateway and an S3 image bucket; API Gateway invokes a Lambda that writes to DynamoDB and enqueues to SQS.">
   </div>
   <div class="actions">
+    <a class="open-in-drawio" data-drawio-src="examples/petshop.drawio" data-title="Pet shop" href="examples/petshop.drawio">Open in draw.io &#8599;</a>
     <a href="examples/petshop.drawio">Download .drawio</a>
     <a href="examples/petshop.svg">Download SVG</a>
     <a href="https://github.com/mvhenten/drawio-headless/blob/main/crates/examples/examples/petshop.rs">Source: petshop.rs</a>
@@ -209,6 +210,7 @@ fn main() -&gt; std::io::Result&lt;()&gt; {
     <img src="examples/cross-account.svg" alt="Cross-account VPC link: a Lambda inside the Account A dashed container connects to an IAM AssumeRole and an MSK cluster inside the Account B dashed container.">
   </div>
   <div class="actions">
+    <a class="open-in-drawio" data-drawio-src="examples/cross-account.drawio" data-title="Cross-account VPC link" href="examples/cross-account.drawio">Open in draw.io &#8599;</a>
     <a href="examples/cross-account.drawio">Download .drawio</a>
     <a href="examples/cross-account.svg">Download SVG</a>
     <a href="https://github.com/mvhenten/drawio-headless/blob/main/crates/examples/examples/cross_account.rs">Source: cross_account.rs</a>
@@ -259,6 +261,7 @@ fn main() -&gt; std::io::Result&lt;()&gt; {
     <img src="examples/event-driven.svg" alt="Event-driven image processing: an S3 bucket triggers a resize Lambda that writes to DynamoDB and publishes to an SNS topic.">
   </div>
   <div class="actions">
+    <a class="open-in-drawio" data-drawio-src="examples/event-driven.drawio" data-title="Event-driven image processing" href="examples/event-driven.drawio">Open in draw.io &#8599;</a>
     <a href="examples/event-driven.drawio">Download .drawio</a>
     <a href="examples/event-driven.svg">Download SVG</a>
     <a href="https://github.com/mvhenten/drawio-headless/blob/main/crates/examples/examples/event_driven.rs">Source: event_driven.rs</a>
@@ -292,5 +295,20 @@ fn main() -&gt; std::io::Result&lt;()&gt; {
 </footer>
 
 </main>
+<script>
+  document.querySelectorAll('.open-in-drawio').forEach((link) => {
+    link.addEventListener('click', async (e) => {
+      e.preventDefault();
+      try {
+        const xml = await fetch(link.dataset.drawioSrc).then((r) => r.text());
+        const title = link.dataset.title || 'diagram';
+        const url = `https://app.diagrams.net/?title=${encodeURIComponent(title)}#R${encodeURIComponent(xml)}`;
+        window.open(url, '_blank', 'noopener');
+      } catch (err) {
+        window.location.href = link.dataset.drawioSrc;
+      }
+    });
+  });
+</script>
 </body>
 </html>
