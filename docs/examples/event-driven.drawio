@@ -4,16 +4,16 @@
       <root>
         <mxCell id="0"/>
         <mxCell id="1" parent="0"/>
-        <mxCell id="uploads" value="S3 (uploads)" vertex="1" parent="1" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#7AA116;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=0;fontSize=12;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.s3;">
+        <mxCell id="uploads" value="S3 (uploads)" vertex="1" parent="1" style="sketch=0;points=[[0,0,0],[1,0,0],[0,1,0],[1,1,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#7AA116;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=0;fontSize=12;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.s3;">
           <mxGeometry x="320" y="80" width="78" height="78" as="geometry"/>
         </mxCell>
-        <mxCell id="resize" value="Resize Lambda" vertex="1" parent="1" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#ED7100;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=0;fontSize=12;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;">
+        <mxCell id="resize" value="Resize Lambda" vertex="1" parent="1" style="sketch=0;points=[[0,0,0],[1,0,0],[0,1,0],[1,1,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#ED7100;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=0;fontSize=12;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;">
           <mxGeometry x="320" y="280" width="78" height="78" as="geometry"/>
         </mxCell>
-        <mxCell id="metadata" value="Image metadata" vertex="1" parent="1" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#C925D1;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=0;fontSize=12;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.dynamodb;">
+        <mxCell id="metadata" value="Image metadata" vertex="1" parent="1" style="sketch=0;points=[[0,0,0],[1,0,0],[0,1,0],[1,1,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#C925D1;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=0;fontSize=12;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.dynamodb;">
           <mxGeometry x="140" y="480" width="78" height="78" as="geometry"/>
         </mxCell>
-        <mxCell id="topic" value="Notifications" vertex="1" parent="1" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#E7157B;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=0;fontSize=12;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.sns;">
+        <mxCell id="topic" value="Notifications" vertex="1" parent="1" style="sketch=0;points=[[0,0,0],[1,0,0],[0,1,0],[1,1,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#E7157B;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=0;fontSize=12;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.sns;">
           <mxGeometry x="500" y="480" width="78" height="78" as="geometry"/>
         </mxCell>
         <mxCell id="e1" edge="1" parent="1" source="uploads" target="resize" style="edgeStyle=orthogonalEdgeStyle;html=0;endArrow=open;startArrow=none;rounded=0;">

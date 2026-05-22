@@ -12,7 +12,8 @@ use crate::{DEFAULT_AWS_TILE, Node};
 /// `resIcon` identifier.
 fn res_icon_style(fill: &str, res_icon: &str) -> String {
     format!(
-        "sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor={fill};\
+        "sketch=0;points=[[0,0,0],[1,0,0],[0,1,0],[1,1,0]];\
+         outlineConnect=0;fontColor=#232F3E;fillColor={fill};\
          strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;\
          verticalAlign=top;align=center;html=0;fontSize=12;aspect=fixed;\
          shape=mxgraph.aws4.resourceIcon;resIcon={res_icon};"
@@ -112,6 +113,12 @@ mod tests {
             node.style,
         );
         assert!(node.style.contains("shape=mxgraph.aws4.resourceIcon"));
+        assert!(
+            node.style
+                .contains("points=[[0,0,0],[1,0,0],[0,1,0],[1,1,0]]"),
+            "missing connection points in style: {}",
+            node.style,
+        );
     }
 
     #[test]
