@@ -1,0 +1,51 @@
+{
+  "name": "drawio-headless",
+  "version": "0.1.0",
+  "description": "Headless authoring and rendering of drawio diagrams. CLI wrapper around the Rust binary.",
+  "bin": {
+    "drawio-headless": "bin/drawio-headless.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/install.js"
+  },
+  "files": [
+    "bin/",
+    "scripts/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mvhenten/drawio-headless"
+  },
+  "homepage": "https://github.com/mvhenten/drawio-headless",
+  "bugs": {
+    "url": "https://github.com/mvhenten/drawio-headless/issues"
+  },
+  "keywords": [
+    "drawio",
+    "draw.io",
+    "diagram",
+    "svg",
+    "render",
+    "headless",
+    "cli",
+    "aws",
+    "azure",
+    "gcp",
+    "kubernetes"
+  ],
+  "os": [
+    "linux",
+    "darwin",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ]
+}
