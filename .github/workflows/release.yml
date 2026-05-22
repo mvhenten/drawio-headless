@@ -1,0 +1,180 @@
+name: Release
+
+# Builds cross-platform release binaries on a `v*.*.*` tag push, attaches them
+# to the GitHub Release, then publishes the npm wrapper package.
+#
+# Manual `workflow_dispatch` is also supported for testing the build matrix
+# without cutting a real release (the publish jobs are tag-gated).
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: false
+            archive: tar.gz
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: true
+            archive: tar.gz
+          - target: x86_64-apple-darwin
+            os: macos-13
+            cross: false
+            archive: tar.gz
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            cross: false
+            archive: tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            cross: false
+            archive: zip
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install cross (linux aarch64)
+        if: matrix.cross
+        run: cargo install cross --locked
+
+      - name: Build (native)
+        if: ${{ matrix.cross == false }}
+        shell: bash
+        run: cargo build --release --bin drawio-headless --features rasterize --target ${{ matrix.target }}
+
+      - name: Build (cross)
+        if: ${{ matrix.cross == true }}
+        shell: bash
+        run: cross build --release --bin drawio-headless --features rasterize --target ${{ matrix.target }}
+
+      - name: Strip binary (unix, native)
+        if: ${{ matrix.archive == 'tar.gz' && matrix.cross == false }}
+        shell: bash
+        run: strip "target/${{ matrix.target }}/release/drawio-headless" || true
+
+      - name: Stage artifact (unix)
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        run: |
+          set -eu
+          version="${GITHUB_REF_NAME#v}"
+          if [ -z "$version" ] || [ "$version" = "$GITHUB_REF_NAME" ]; then
+            version="0.0.0-dev"
+          fi
+          stage="drawio-headless-${version}-${{ matrix.target }}"
+          mkdir -p "dist/${stage}"
+          cp "target/${{ matrix.target }}/release/drawio-headless" "dist/${stage}/drawio-headless"
+          cp LICENSE "dist/${stage}/LICENSE"
+          cp README.md "dist/${stage}/README.md"
+          tar -czf "dist/${stage}.tar.gz" -C dist "${stage}"
+          (cd dist && shasum -a 256 "${stage}.tar.gz" > "${stage}.tar.gz.sha256")
+          echo "ASSET=dist/${stage}.tar.gz" >> "$GITHUB_ENV"
+          echo "SHA=dist/${stage}.tar.gz.sha256" >> "$GITHUB_ENV"
+
+      - name: Stage artifact (windows)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '^v',''
+          if (-not $version -or $version -eq $env:GITHUB_REF_NAME) { $version = '0.0.0-dev' }
+          $stage = "drawio-headless-$version-${{ matrix.target }}"
+          New-Item -ItemType Directory -Force -Path "dist/$stage" | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/drawio-headless.exe" "dist/$stage/drawio-headless.exe"
+          Copy-Item "LICENSE" "dist/$stage/LICENSE"
+          Copy-Item "README.md" "dist/$stage/README.md"
+          Compress-Archive -Path "dist/$stage/*" -DestinationPath "dist/$stage.zip"
+          $hash = (Get-FileHash "dist/$stage.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $stage.zip" | Out-File -Encoding ascii "dist/$stage.zip.sha256"
+          "ASSET=dist/$stage.zip"        | Out-File -Encoding ascii -Append $env:GITHUB_ENV
+          "SHA=dist/$stage.zip.sha256"   | Out-File -Encoding ascii -Append $env:GITHUB_ENV
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: drawio-headless-${{ matrix.target }}
+          path: |
+            ${{ env.ASSET }}
+            ${{ env.SHA }}
+          if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List downloaded assets
+        run: ls -la dist
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.sha256
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+
+  publish-npm:
+    name: Publish npm package
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Sync npm package version to tag
+        working-directory: npm
+        run: |
+          set -eu
+          version="${GITHUB_REF_NAME#v}"
+          node -e "const fs=require('fs');const p=require('./package.json');p.version='${version}';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');"
+          head -5 package.json
+
+      - name: Publish to npm
+        if: ${{ env.NPM_TOKEN != '' }}
+        working-directory: npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
+
+      - name: Skip publish (no NPM_TOKEN)
+        if: ${{ env.NPM_TOKEN == '' }}
+        run: |
+          echo "NPM_TOKEN secret not configured on this repo; skipping npm publish."
+          echo "Set the NPM_TOKEN secret to enable automatic publishing on tag push."
