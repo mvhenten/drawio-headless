@@ -44,9 +44,28 @@ let svg: String = drawio_render::render(&xml)?;
 drawio-headless render input.drawio output.svg
 drawio-headless render --stdin > out.svg
 cat input.drawio | drawio-headless render --stdin
+
+drawio-headless author input.json output.drawio
+drawio-headless author --stdin > out.drawio
+cat input.json | drawio-headless author --stdin
 ```
 
-Authoring via the CLI is not in scope for v0.
+The `author` subcommand reads a small declarative JSON schema and emits a
+`.drawio` XML file (full reference: [`docs/authoring-schema.md`](docs/authoring-schema.md)):
+
+```json
+{
+  "name": "ApiLambda",
+  "nodes": [
+    {"id": "api", "kind": "aws.api_gateway", "label": "API", "x": 80, "y": 80},
+    {"id": "lam", "kind": "aws.lambda",      "label": "Lambda", "x": 320, "y": 80}
+  ],
+  "edges": [{"source": "api", "target": "lam"}]
+}
+```
+
+The JSON path is a thin frontend over the library: feeding either path the
+same logical diagram produces byte-identical `.drawio` output.
 
 ## Scope (v0)
 
