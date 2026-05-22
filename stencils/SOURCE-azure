@@ -1,0 +1,10 @@
+azure.xml vendored from jgraph/drawio
+Repo:   https://github.com/jgraph/drawio
+Path:   src/main/webapp/stencils/azure.xml
+Commit: 1d9b73f0017c3089a49f4957698efc5c76f00e1f
+License: Apache-2.0 (see upstream LICENSE)
+
+Note: this is the legacy Azure stencil set with vector shapes (the
+`mxgraph.azure.*` namespace). The newer "Azure2" sidebar in drawio
+is image-based (PNG sprites under `img/lib/azure2/`) and is not a
+stencil library; it is therefore not vendored here.

@@ -1,0 +1,27 @@
+gcp.xml vendored from jgraph/drawio
+Repo:   https://github.com/jgraph/drawio
+Path:   src/main/webapp/stencils/gcp/ (directory of 10 category files)
+Commit: 1d9b73f0017c3089a49f4957698efc5c76f00e1f
+License: Apache-2.0 (see upstream LICENSE)
+
+Concatenation
+-------------
+Upstream the GCP stencils are split into ten category files. They share
+the `mxgraph.gcp.<category>` namespace but each `<shapes>` element is
+its own XML document, so we wrap them in a synthetic `<gcp-libraries>`
+root element to make a single well-formed file. Files concatenated, in
+this order:
+
+  big_data.xml
+  compute.xml
+  developer_tools.xml
+  extras.xml
+  identity_and_security.xml
+  machine_learning.xml
+  management_tools.xml
+  networking.xml
+  product_cards.xml
+  storage_databases.xml
+
+The alternative `gcp2.xml` upstream is image-based (SVG data URIs) rather
+than vector stencils, so it is not vendored.
