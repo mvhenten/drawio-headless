@@ -28,6 +28,19 @@ drawio-headless author input.json output.drawio
 cat input.json | drawio-headless author --stdin > output.drawio
 ```
 
+For the common "JSON in, SVG out" flow, `compose` skips the intermediate
+file entirely:
+
+```sh
+drawio-headless compose input.json            # writes ./input.svg
+drawio-headless compose input.json out.svg
+drawio-headless compose input.json out.png --format png
+drawio-headless compose input.json out.svg --keep-drawio out.drawio
+cat input.json | drawio-headless compose --stdin > out.svg
+```
+
+`compose` consumes the exact same JSON schema documented below.
+
 The output is byte-identical to what the equivalent Rust code would produce:
 
 ```rust
@@ -64,17 +77,45 @@ Unknown top-level keys are rejected.
 
 ### Node kinds
 
-All AWS factories are namespaced as `aws.<service>` and map 1:1 onto the
-catalogue exposed by the `drawio-author` crate. Use `raw` to bypass the
+Factories are namespaced as `<library>.<key>`, where `<library>` is one
+of `aws`, `azure`, `gcp`, or `k8s` and `<key>` matches the function name
+in the corresponding `drawio-author` module. Use `raw` to bypass the
 catalogue and supply your own `style` string.
 
-`raw`, `aws.api_gateway`, `aws.lambda`, `aws.s3`, `aws.dynamodb`, `aws.ec2`,
-`aws.sqs`, `aws.sns`, `aws.cloudfront`, `aws.msk`, `aws.iam`, `aws.vpc`,
-`aws.eventbridge`, `aws.step_functions`, `aws.appsync`, `aws.ecs`, `aws.eks`,
-`aws.fargate`, `aws.app_runner`, `aws.batch`, `aws.rds`, `aws.elasticache`,
-`aws.efs`, `aws.route_53`, `aws.elastic_load_balancing`, `aws.cognito`,
-`aws.secrets_manager`, `aws.kms`, `aws.kinesis`, `aws.athena`,
-`aws.cloudwatch`.
+The full catalogue is discoverable at runtime — no need to memorise it:
+
+```sh
+drawio-headless list-shapes --format json
+# -> [{"library":"aws","key":"lambda","category":"Compute"}, ...]
+
+drawio-headless list-shapes --library aws --format text
+# human-friendly listing grouped by category
+```
+
+Indicative members (verify against `list-shapes` for the current set):
+
+- **AWS** (~30): `aws.api_gateway`, `aws.lambda`, `aws.s3`,
+  `aws.dynamodb`, `aws.ec2`, `aws.sqs`, `aws.sns`, `aws.cloudfront`,
+  `aws.msk`, `aws.iam`, `aws.vpc`, `aws.eventbridge`,
+  `aws.step_functions`, `aws.appsync`, `aws.ecs`, `aws.eks`,
+  `aws.fargate`, `aws.app_runner`, `aws.batch`, `aws.rds`,
+  `aws.elasticache`, `aws.efs`, `aws.route_53`,
+  `aws.elastic_load_balancing`, `aws.cognito`, `aws.secrets_manager`,
+  `aws.kms`, `aws.kinesis`, `aws.athena`, `aws.cloudwatch`.
+- **Azure** (15): `azure.active_directory`, `azure.sql_database`,
+  `azure.service_bus`, `azure.storage_blob`, `azure.virtual_machine`,
+  `azure.virtual_network`, `azure.website`, `azure.cloud_service`,
+  `azure.cdn`, `azure.express_route`, `azure.notification_hub`,
+  `azure.traffic_manager`, `azure.cache`, `azure.load_balancer`,
+  `azure.storage_queue`.
+- **GCP** (15): `gcp.app_engine`, `gcp.cloud_functions`,
+  `gcp.compute_engine`, `gcp.gke`, `gcp.cloud_storage`, `gcp.bigquery`,
+  `gcp.pubsub`, `gcp.cloud_sql`, `gcp.cloud_datastore`, `gcp.bigtable`,
+  `gcp.cloud_cdn`, `gcp.cloud_load_balancing`, `gcp.cloud_dns`,
+  `gcp.iam`, `gcp.logging`.
+- **Kubernetes** (10): `k8s.pod`, `k8s.deployment`, `k8s.replica_set`,
+  `k8s.service`, `k8s.ingress`, `k8s.config_map`, `k8s.secret`,
+  `k8s.namespace`, `k8s.node`, `k8s.persistent_volume`.
 
 Unknown kinds are rejected with the closest catalogue matches surfaced as a
 "did you mean ...?" hint.

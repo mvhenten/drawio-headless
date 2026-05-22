@@ -175,6 +175,13 @@ Unrecognised commands are silently skipped. A `RenderError::UnsupportedStencilCm
 - **CLI authoring**: small flat JSON schema with named factories
   (`aws.lambda`, `aws.api_gateway`, ...) and a `raw` escape hatch. See
   [`docs/authoring-schema.md`](authoring-schema.md).
+- **Skill bundle**: a `skill/` directory at the repo root packages the
+  CLI as a [Claude Code
+  skill](https://docs.claude.com/en/docs/claude-code/skills). The bundle
+  ships `SKILL.md` (trigger phrases + worked example), an `ensure.sh`
+  install-check, and a round-trip smoke test. The skill drives
+  `drawio-headless compose` (author + render in one shot) and
+  `drawio-headless list-shapes` (factory discovery at runtime).
 
 ## Closed-loop measurements (v0 baseline)
 

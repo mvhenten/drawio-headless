@@ -7,8 +7,9 @@
 //! the only place that knows about JSON.
 
 use std::collections::HashSet;
+use std::sync::OnceLock;
 
-use drawio_author::{Diagram, GroupKind, GroupOpts, Node, aws};
+use drawio_author::{Diagram, GroupKind, GroupOpts, Node, aws, azure, catalogue, gcp, k8s};
 use serde::Deserialize;
 
 /// Top-level schema: a named diagram with groups, nodes and edges.
@@ -103,7 +104,10 @@ impl std::fmt::Display for AuthorError {
             Self::UnknownNodeKind { kind, suggestions } => {
                 write!(f, "unknown node kind {kind:?}")?;
                 if suggestions.is_empty() {
-                    write!(f, ". Known kinds: {}", join_quoted(&NODE_KINDS))?;
+                    write!(
+                        f,
+                        ". Run `drawio-headless list-shapes` to see the catalogue"
+                    )?;
                 } else {
                     write!(f, " — did you mean {}?", join_quoted(suggestions))?;
                 }
@@ -235,7 +239,7 @@ fn build_node(n: &NodeSpec) -> Result<Node, AuthorError> {
         ));
     }
 
-    let factory = lookup_aws_factory(&n.kind)?;
+    let factory = lookup_factory(&n.kind)?;
     let mut node = factory(&n.id, &n.label);
     node.x = n.x;
     node.y = n.y;
@@ -248,55 +252,97 @@ fn build_node(n: &NodeSpec) -> Result<Node, AuthorError> {
     Ok(node)
 }
 
-/// Map a `kind` string to one of the AWS factory functions exposed by the
-/// `drawio-author` crate. Returns the factory pointer so we can apply the
+/// Map a `library.key` kind string to the corresponding factory function in
+/// the `drawio-author` crate. Returns a function pointer so we can apply the
 /// id/label without an extra match arm per call site.
-fn lookup_aws_factory(kind: &str) -> Result<fn(&str, &str) -> Node, AuthorError> {
-    let Some(rest) = kind.strip_prefix("aws.") else {
+fn lookup_factory(kind: &str) -> Result<fn(&str, &str) -> Node, AuthorError> {
+    let Some((lib, rest)) = kind.split_once('.') else {
         return Err(AuthorError::UnknownNodeKind {
             kind: kind.to_string(),
-            suggestions: suggest(kind, &NODE_KINDS),
+            suggestions: suggest(kind, node_kinds()),
         });
     };
-    let f: fn(&str, &str) -> Node = match rest {
-        "api_gateway" => aws::api_gateway,
-        "lambda" => aws::lambda,
-        "s3" => aws::s3,
-        "dynamodb" => aws::dynamodb,
-        "ec2" => aws::ec2,
-        "sqs" => aws::sqs,
-        "sns" => aws::sns,
-        "cloudfront" => aws::cloudfront,
-        "msk" => aws::msk,
-        "iam" => aws::iam,
-        "vpc" => aws::vpc,
-        "eventbridge" => aws::eventbridge,
-        "step_functions" => aws::step_functions,
-        "appsync" => aws::appsync,
-        "ecs" => aws::ecs,
-        "eks" => aws::eks,
-        "fargate" => aws::fargate,
-        "app_runner" => aws::app_runner,
-        "batch" => aws::batch,
-        "rds" => aws::rds,
-        "elasticache" => aws::elasticache,
-        "efs" => aws::efs,
-        "route_53" => aws::route_53,
-        "elastic_load_balancing" => aws::elastic_load_balancing,
-        "cognito" => aws::cognito,
-        "secrets_manager" => aws::secrets_manager,
-        "kms" => aws::kms,
-        "kinesis" => aws::kinesis,
-        "athena" => aws::athena,
-        "cloudwatch" => aws::cloudwatch,
-        _ => {
-            return Err(AuthorError::UnknownNodeKind {
-                kind: kind.to_string(),
-                suggestions: suggest(kind, &NODE_KINDS),
-            });
-        }
+    let f: Option<fn(&str, &str) -> Node> = match (lib, rest) {
+        ("aws", "api_gateway") => Some(aws::api_gateway),
+        ("aws", "lambda") => Some(aws::lambda),
+        ("aws", "s3") => Some(aws::s3),
+        ("aws", "dynamodb") => Some(aws::dynamodb),
+        ("aws", "ec2") => Some(aws::ec2),
+        ("aws", "sqs") => Some(aws::sqs),
+        ("aws", "sns") => Some(aws::sns),
+        ("aws", "cloudfront") => Some(aws::cloudfront),
+        ("aws", "msk") => Some(aws::msk),
+        ("aws", "iam") => Some(aws::iam),
+        ("aws", "vpc") => Some(aws::vpc),
+        ("aws", "eventbridge") => Some(aws::eventbridge),
+        ("aws", "step_functions") => Some(aws::step_functions),
+        ("aws", "appsync") => Some(aws::appsync),
+        ("aws", "ecs") => Some(aws::ecs),
+        ("aws", "eks") => Some(aws::eks),
+        ("aws", "fargate") => Some(aws::fargate),
+        ("aws", "app_runner") => Some(aws::app_runner),
+        ("aws", "batch") => Some(aws::batch),
+        ("aws", "rds") => Some(aws::rds),
+        ("aws", "elasticache") => Some(aws::elasticache),
+        ("aws", "efs") => Some(aws::efs),
+        ("aws", "route_53") => Some(aws::route_53),
+        ("aws", "elastic_load_balancing") => Some(aws::elastic_load_balancing),
+        ("aws", "cognito") => Some(aws::cognito),
+        ("aws", "secrets_manager") => Some(aws::secrets_manager),
+        ("aws", "kms") => Some(aws::kms),
+        ("aws", "kinesis") => Some(aws::kinesis),
+        ("aws", "athena") => Some(aws::athena),
+        ("aws", "cloudwatch") => Some(aws::cloudwatch),
+
+        ("azure", "active_directory") => Some(azure::active_directory),
+        ("azure", "cache") => Some(azure::cache),
+        ("azure", "load_balancer") => Some(azure::load_balancer),
+        ("azure", "website") => Some(azure::website),
+        ("azure", "cloud_service") => Some(azure::cloud_service),
+        ("azure", "cdn") => Some(azure::cdn),
+        ("azure", "express_route") => Some(azure::express_route),
+        ("azure", "notification_hub") => Some(azure::notification_hub),
+        ("azure", "service_bus") => Some(azure::service_bus),
+        ("azure", "sql_database") => Some(azure::sql_database),
+        ("azure", "storage_blob") => Some(azure::storage_blob),
+        ("azure", "storage_queue") => Some(azure::storage_queue),
+        ("azure", "traffic_manager") => Some(azure::traffic_manager),
+        ("azure", "virtual_machine") => Some(azure::virtual_machine),
+        ("azure", "virtual_network") => Some(azure::virtual_network),
+
+        ("gcp", "app_engine") => Some(gcp::app_engine),
+        ("gcp", "cloud_functions") => Some(gcp::cloud_functions),
+        ("gcp", "compute_engine") => Some(gcp::compute_engine),
+        ("gcp", "gke") => Some(gcp::gke),
+        ("gcp", "cloud_storage") => Some(gcp::cloud_storage),
+        ("gcp", "bigquery") => Some(gcp::bigquery),
+        ("gcp", "pubsub") => Some(gcp::pubsub),
+        ("gcp", "cloud_sql") => Some(gcp::cloud_sql),
+        ("gcp", "cloud_datastore") => Some(gcp::cloud_datastore),
+        ("gcp", "bigtable") => Some(gcp::bigtable),
+        ("gcp", "cloud_cdn") => Some(gcp::cloud_cdn),
+        ("gcp", "cloud_load_balancing") => Some(gcp::cloud_load_balancing),
+        ("gcp", "cloud_dns") => Some(gcp::cloud_dns),
+        ("gcp", "iam") => Some(gcp::iam),
+        ("gcp", "logging") => Some(gcp::logging),
+
+        ("k8s", "pod") => Some(k8s::pod),
+        ("k8s", "deployment") => Some(k8s::deployment),
+        ("k8s", "service") => Some(k8s::service),
+        ("k8s", "ingress") => Some(k8s::ingress),
+        ("k8s", "config_map") => Some(k8s::config_map),
+        ("k8s", "secret") => Some(k8s::secret),
+        ("k8s", "namespace") => Some(k8s::namespace),
+        ("k8s", "node") => Some(k8s::node),
+        ("k8s", "persistent_volume") => Some(k8s::persistent_volume),
+        ("k8s", "replica_set") => Some(k8s::replica_set),
+
+        _ => None,
     };
-    Ok(f)
+    f.ok_or_else(|| AuthorError::UnknownNodeKind {
+        kind: kind.to_string(),
+        suggestions: suggest(kind, node_kinds()),
+    })
 }
 
 fn parse_group_kind(kind: &str) -> Result<GroupKind, AuthorError> {
@@ -312,40 +358,24 @@ fn parse_group_kind(kind: &str) -> Result<GroupKind, AuthorError> {
     }
 }
 
-/// All accepted node `kind` strings.
-pub const NODE_KINDS: [&str; 31] = [
-    "raw",
-    "aws.api_gateway",
-    "aws.lambda",
-    "aws.s3",
-    "aws.dynamodb",
-    "aws.ec2",
-    "aws.sqs",
-    "aws.sns",
-    "aws.cloudfront",
-    "aws.msk",
-    "aws.iam",
-    "aws.vpc",
-    "aws.eventbridge",
-    "aws.step_functions",
-    "aws.appsync",
-    "aws.ecs",
-    "aws.eks",
-    "aws.fargate",
-    "aws.app_runner",
-    "aws.batch",
-    "aws.rds",
-    "aws.elasticache",
-    "aws.efs",
-    "aws.route_53",
-    "aws.elastic_load_balancing",
-    "aws.cognito",
-    "aws.secrets_manager",
-    "aws.kms",
-    "aws.kinesis",
-    "aws.athena",
-    "aws.cloudwatch",
-];
+/// All accepted node `kind` strings. Built once from the static catalogue
+/// plus the `"raw"` escape hatch; cached in a `OnceLock` so the suggestion
+/// helper can keep its slice-based signature.
+fn node_kinds() -> &'static [&'static str] {
+    static KINDS: OnceLock<Vec<&'static str>> = OnceLock::new();
+    KINDS.get_or_init(|| {
+        let mut v: Vec<&'static str> = Vec::with_capacity(catalogue::ENTRIES.len() + 1);
+        v.push("raw");
+        for e in catalogue::ENTRIES {
+            // Leak the formatted string so we get a `&'static str` without
+            // changing the public signature. The leak is bounded — one
+            // allocation per catalogue entry, at most a few hundred bytes.
+            let s: &'static str = Box::leak(e.qualified_kind().into_boxed_str());
+            v.push(s);
+        }
+        v
+    })
+}
 
 /// All accepted group `kind` strings.
 pub const GROUP_KINDS: [&str; 4] = ["aws.account", "aws.vpc", "aws.cloud", "generic"];

@@ -66,7 +66,21 @@ cat input.drawio | drawio-headless render --stdin
 drawio-headless author input.json output.drawio
 drawio-headless author --stdin > out.drawio
 cat input.json | drawio-headless author --stdin
+
+# Author + render in one shot. Writes ./<input-stem>.svg by default.
+drawio-headless compose input.json
+drawio-headless compose input.json out.svg
+drawio-headless compose input.json out.png --format png
+drawio-headless compose input.json out.svg --keep-drawio out.drawio
+
+# Enumerate the curated factory catalogue (LLM-friendly).
+drawio-headless list-shapes --format json
+drawio-headless list-shapes --library aws --format text
 ```
+
+PNG output is gated behind the `rasterize` feature, which is enabled by
+default. Build a slim binary without `resvg` via
+`cargo build --no-default-features`.
 
 The `author` subcommand reads a small declarative JSON schema and emits a
 `.drawio` XML file (full reference: [`docs/authoring-schema.md`](docs/authoring-schema.md)):
@@ -84,6 +98,26 @@ The `author` subcommand reads a small declarative JSON schema and emits a
 
 The JSON path is a thin frontend over the library: feeding either path the
 same logical diagram produces byte-identical `.drawio` output.
+
+### Using as a Claude Code skill
+
+The `skill/` directory packages `drawio-headless` as a [Claude Code
+skill](https://docs.claude.com/en/docs/claude-code/skills) so an LLM can
+author and render cloud architecture diagrams from natural-language
+prompts. Install with:
+
+```sh
+cp -r skill ~/.claude/skills/drawio-headless
+bash ~/.claude/skills/drawio-headless/scripts/ensure.sh
+```
+
+`ensure.sh` checks that the `drawio-headless` binary is on PATH and
+prints copy-pasteable install instructions if it isn't (no automatic
+install — by design). The skill itself triggers on phrases like "draw an
+AWS architecture", "create a cloud diagram", or "diagram with AWS /
+Azure / GCP", and uses `drawio-headless compose` under the hood. See
+[`skill/SKILL.md`](skill/SKILL.md) for trigger phrases, the JSON
+schema, worked example, and common pitfalls.
 
 ## Scope
 
