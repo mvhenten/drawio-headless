@@ -79,6 +79,20 @@ The closed-loop test (`crates/closed-loop-test/tests/closed_loop.rs`) writes
 artifacts to `target/test-output/`:
 `api-lambda.drawio`, `api-lambda.svg`, `api-lambda.png`.
 
+Visual regression is covered by
+`crates/closed-loop-test/tests/snapshots.rs`, which pixel-diffs rendered
+PNGs against committed goldens in `crates/closed-loop-test/tests/snapshots/`.
+To regenerate goldens after an intentional visual change:
+
+```sh
+INSTA_UPDATE=1 cargo test -p closed-loop-test
+git add crates/closed-loop-test/tests/snapshots/
+git commit -m "test: refresh golden snapshots"
+```
+
+See `CONTRIBUTING.md` for tolerances, determinism notes, and the diff
+artifact location.
+
 ## License
 
 Apache-2.0. The vendored stencil (`stencils/aws4.xml`) is from
