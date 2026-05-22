@@ -1,0 +1,18 @@
+[package]
+name = "drawio-render"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Headless renderer: .drawio XML to SVG (no browser, no DOM)."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+quick-xml.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

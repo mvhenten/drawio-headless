@@ -1,0 +1,19 @@
+[package]
+name = "drawio-headless"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "drawio-headless: render .drawio XML to SVG without a browser."
+
+[[bin]]
+name = "drawio-headless"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+drawio-render.workspace = true
+
+[lints]
+workspace = true

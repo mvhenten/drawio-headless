@@ -1,0 +1,22 @@
+[package]
+name = "closed-loop-test"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+description = "Top-level end-to-end test: author -> XML -> SVG -> PNG."
+
+# This crate exists only to host integration tests; no public surface.
+[lib]
+path = "src/lib.rs"
+
+[dev-dependencies]
+drawio-author.workspace = true
+drawio-render.workspace = true
+resvg = "0.43"
+tiny-skia = "0.11"
+png = "0.17"
+
+[lints]
+workspace = true
