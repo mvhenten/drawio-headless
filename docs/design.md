@@ -186,6 +186,18 @@ From `cargo test --workspace`:
 
 See `docs/sample-output.png`.
 
+## CI and demo-page deploy
+
+`.github/workflows/ci.yml` gates every PR on `cargo test --workspace`,
+`cargo clippy --workspace --all-targets -- -D warnings`, and
+`cargo fmt --all --check` as three parallel jobs.
+`.github/workflows/pages.yml` rebuilds `docs/examples/*.svg` from the
+Rust example sources on every push to `main` and deploys the
+resulting `docs/` directory via `actions/deploy-pages`. The committed
+`.drawio` files are the durable inputs; the SVGs are pure outputs and
+deliberately not tracked in git, so the published demo can never
+drift from the code on `main`.
+
 ## Roadmap
 
 No commitments on order or timeline.
