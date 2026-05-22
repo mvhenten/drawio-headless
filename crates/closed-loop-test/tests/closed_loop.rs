@@ -136,6 +136,45 @@ fn closed_loop_author_render_rasterise() {
 }
 
 #[test]
+fn orthogonal_edges_round_trip_to_png() {
+    // Author a small diagram whose two edges *must* bend to land on their
+    // connection points (offset both horizontally and vertically). Then
+    // run it through render -> resvg and assert the PNG looks reasonable.
+    let out = out_dir();
+    let mut diagram = Diagram::new("OrthogonalEdges");
+    let api = diagram.add_node(aws::api_gateway("api", "API").at(80.0, 80.0));
+    let lam = diagram.add_node(aws::lambda("lam", "Lambda").at(320.0, 260.0));
+    let ddb = diagram.add_node(aws::dynamodb("ddb", "DynamoDB").at(560.0, 80.0));
+    diagram.connect(&api, &lam);
+    diagram.connect(&lam, &ddb);
+    let xml = diagram.to_xml();
+    assert!(xml.contains("edgeStyle=orthogonalEdgeStyle"));
+
+    let svg = drawio_render::render(&xml).expect("render");
+    fs::write(out.join("orthogonal-edges.drawio"), &xml).expect("write drawio");
+    fs::write(out.join("orthogonal-edges.svg"), &svg).expect("write svg");
+    // Both edges should render as <path> polylines, not straight <line>s.
+    let path_count = svg.matches("<path d=\"M ").count();
+    assert!(
+        path_count >= 2,
+        "expected at least 2 orthogonal edge paths, got {path_count} in: {svg}",
+    );
+
+    // Rasterise via resvg and assert the PNG is well-formed.
+    let mut opts = usvg::Options::default();
+    opts.fontdb_mut().load_system_fonts();
+    let tree = usvg::Tree::from_str(&svg, &opts).expect("usvg parse");
+    let size = tree.size().to_int_size();
+    let mut pixmap = tiny_skia::Pixmap::new(size.width(), size.height()).expect("pixmap");
+    pixmap.fill(tiny_skia::Color::WHITE);
+    resvg::render(&tree, tiny_skia::Transform::default(), &mut pixmap.as_mut());
+    let png_path = out.join("orthogonal-edges.png");
+    pixmap.save_png(&png_path).expect("save png");
+    let png_bytes = fs::read(&png_path).expect("read png");
+    assert!(png_bytes.len() > 100, "png file size sanity");
+}
+
+#[test]
 fn group_boundary_renders_as_dashed_rect() {
     let out = out_dir();
     let mut diagram = Diagram::new("GroupBoundary");
