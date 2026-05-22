@@ -65,7 +65,7 @@ The split lets an LLM author a diagram, persist it as a `.drawio` document inter
 - For each vertex: parses the style attribute. If `shape=mxgraph.aws4.resourceIcon`, draws a coloured tile + looks up the named stencil and renders its `<foreground>` path inside the tile in white. Otherwise: plain coloured rectangle with a label.
 - For each edge: straight line between source/target bounding-box midpoints with an optional arrowhead marker.
 - The stencil library is parsed once via `OnceLock` — `aws4.xml` is 6 MB; per-render parsing would be wasteful.
-- Compressed `<diagram>` payloads (the default in interactively-saved drawio files) are rejected with a clear error instructing the user to re-save with `compressed="false"`. Inflate-roundtrip is a tracked roadmap item.
+- Compressed `<diagram>` payloads (the default in interactively-saved drawio files) are inflated transparently before parsing: trim, base64-decode, raw DEFLATE, URL-decode, hand the resulting `<mxGraphModel>` XML to the same parser. Detection is body-based (first non-whitespace char): if it is `<` we treat it as plain XML, otherwise as compressed — more robust than trusting the optional `compressed="..."` attribute on `<mxfile>`.
 
 ### `cli`
 
@@ -173,7 +173,6 @@ No commitments on order or timeline.
 - **Other stencil libraries**: Azure, GCP, Cisco, Kubernetes — vendor as additional XML files alongside `aws4.xml`.
 - **Orthogonal edge routing** (`edgeStyle=orthogonalEdgeStyle`).
 - **Connection-point snapping** (`entryX/exitX`).
-- **Compressed `<diagram>` payload support** — implementation reference: `Graph.js:2192`, raw DEFLATE + urldecode + base64.
 - **Authoring via CLI** — input format TBD (small JSON/TOML schema likely).
 - **More mxStencil commands** as we encounter stencils that need them.
 - **Snapshot tests** with committed golden PNGs for visual regression.
