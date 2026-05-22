@@ -9,11 +9,28 @@
 //! - `<ellipse>`, `<rect>`, `<roundrect>` (primitives that produce their own
 //!   SVG nodes)
 //!
-//! Any other command produces an [`crate::RenderError::UnsupportedStencilCmd`].
+//! Other commands (e.g. `<arc>`, `<save>`/`<restore>`, `<alpha>`,
+//! `<strokecolor>`, `<fillcolor>`) are silently skipped — see issue #7. Some
+//! libraries (notably Azure and GCP) rely on these and will render with
+//! partial fidelity.
 //!
-//! Stencil names in the source file use spaces (e.g. `"api gateway"`), while
-//! drawio's `resIcon` style key uses underscores (`api_gateway`). The lookup
-//! normalises both directions.
+//! Multiple libraries
+//! ------------------
+//! Each stencil file declares a `<shapes name="mxgraph.<library>[.<sub>]">`
+//! wrapper. Stencils are keyed inside [`StencilLibrary`] by the *suffix* of
+//! that wrapper name (after the library prefix passed to [`StencilLibrary::from_xml`])
+//! joined with the stencil's own `name` attribute. Concretely:
+//!
+//! - `<shapes name="mxgraph.aws4">` with `<shape name="lambda">` → key `lambda`.
+//! - `<shapes name="mxgraph.azure">` with `<shape name="Virtual Machine">` →
+//!   key `virtual_machine`.
+//! - `<shapes name="mxgraph.gcp.compute">` with `<shape name="App Engine">` →
+//!   key `compute.app_engine`.
+//!
+//! Stencil names in the source file use spaces and mixed case
+//! (e.g. `"api gateway"`), while drawio's lookup keys (`resIcon`, `prIcon`, or
+//! the bare `shape=` suffix) use lower-case underscores (`api_gateway`). The
+//! lookup normalises both directions.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -78,13 +95,21 @@ pub enum Cmd {
 /// Library of all stencils loaded from a single XML source.
 #[derive(Debug, Default, Clone)]
 pub struct StencilLibrary {
-    /// Keys are normalised stencil names (spaces -> underscores, lowercase).
-    by_name: HashMap<String, Stencil>,
+    /// Keys are dotted relative paths from the library prefix down to each
+    /// stencil's normalised name (lowercase, spaces/dashes -> underscores).
+    /// For single-namespace libraries (AWS, Azure, Kubernetes) the key is
+    /// just the stencil name. For multi-namespace libraries (GCP) the key
+    /// is `<category>.<stencil>`, e.g. `compute.app_engine`.
+    by_key: HashMap<String, Stencil>,
 }
 
 impl StencilLibrary {
-    /// Load all `<shape>` entries from a stencil XML document.
-    pub fn from_xml(xml: &str) -> Result<Self, RenderError> {
+    /// Load all `<shape>` entries from a stencil XML document, treating
+    /// `<shapes name="<library_prefix>[.<sub>]">` wrapper elements as
+    /// category-scoping. The library prefix is stripped from each wrapper's
+    /// `name` to derive the relative category path; bare stencils with no
+    /// category form keys equal to their normalised stencil name.
+    pub fn from_xml(xml: &str, library_prefix: &str) -> Result<Self, RenderError> {
         let mut reader = Reader::from_str(xml);
         reader.config_mut().trim_text(true);
         let mut buf = Vec::new();
@@ -92,6 +117,7 @@ impl StencilLibrary {
         let mut lib = Self::default();
         let mut current: Option<Stencil> = None;
         let mut in_foreground = false;
+        let mut category: String = String::new();
 
         loop {
             let evt = reader
@@ -100,16 +126,26 @@ impl StencilLibrary {
             match evt {
                 Event::Eof => break,
                 Event::Start(elem) | Event::Empty(elem) => {
-                    handle_open(&elem, &reader, &mut current, &mut in_foreground)?;
+                    if elem.name().as_ref() == b"shapes" {
+                        category = read_category(&elem, &reader, library_prefix)?;
+                    } else {
+                        handle_open(&elem, &reader, &mut current, &mut in_foreground)?;
+                    }
                 }
                 Event::End(elem) => match elem.name().as_ref() {
                     b"shape" => {
                         if let Some(stencil) = current.take() {
-                            let key = normalise_stencil_key(&stencil.name);
-                            lib.by_name.insert(key, stencil);
+                            let stencil_key = normalise_stencil_key(&stencil.name);
+                            let full = if category.is_empty() {
+                                stencil_key
+                            } else {
+                                format!("{category}.{stencil_key}")
+                            };
+                            lib.by_key.insert(full, stencil);
                         }
                         in_foreground = false;
                     }
+                    b"shapes" => category.clear(),
                     b"foreground" => in_foreground = false,
                     _ => {}
                 },
@@ -121,13 +157,81 @@ impl StencilLibrary {
         Ok(lib)
     }
 
-    /// Look up a stencil by its `resIcon` value, e.g.
-    /// `"mxgraph.aws4.api_gateway"` -> the `"api gateway"` stencil.
-    pub fn lookup(&self, res_icon: &str) -> Option<&Stencil> {
-        let bare = res_icon.rsplit('.').next().unwrap_or(res_icon);
-        let key = normalise_stencil_key(bare);
-        self.by_name.get(&key)
+    /// Look up a stencil by a dotted lookup path *relative to the library
+    /// prefix*. For example, given an AWS library loaded with prefix
+    /// `mxgraph.aws4`:
+    /// - `lookup("lambda")` resolves the `lambda` stencil.
+    /// - `lookup("mxgraph.aws4.lambda")` also resolves it (leading library
+    ///   prefix is tolerated).
+    ///
+    /// For GCP loaded with prefix `mxgraph.gcp`:
+    /// - `lookup("compute.app_engine")` resolves the App Engine stencil
+    ///   from the `mxgraph.gcp.compute` namespace.
+    pub fn lookup(&self, path: &str) -> Option<&Stencil> {
+        // Tolerate callers passing the full `mxgraph.<lib>.<...>` style by
+        // checking both the verbatim normalised key and progressively
+        // shorter suffixes.
+        let normalised = normalise_lookup_path(path);
+        if let Some(s) = self.by_key.get(&normalised) {
+            return Some(s);
+        }
+        // Try stripping leading segments one at a time — handles
+        // `mxgraph.aws4.lambda` -> `lambda` without the caller needing to
+        // know the library prefix.
+        let mut rest = normalised.as_str();
+        while let Some(idx) = rest.find('.') {
+            rest = &rest[idx + 1..];
+            if let Some(s) = self.by_key.get(rest) {
+                return Some(s);
+            }
+        }
+        None
     }
+
+    /// Number of stencils loaded.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.by_key.len()
+    }
+
+    /// Whether the library is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.by_key.is_empty()
+    }
+}
+
+fn read_category(
+    elem: &BytesStart<'_>,
+    reader: &Reader<&[u8]>,
+    library_prefix: &str,
+) -> Result<String, RenderError> {
+    for attr in elem.attributes() {
+        let attr = attr.map_err(|err| RenderError::Xml(err.to_string()))?;
+        if attr.key.as_ref() == b"name" {
+            let value = attr
+                .decode_and_unescape_value(reader.decoder())
+                .map_err(|er| RenderError::Xml(er.to_string()))?;
+            return Ok(category_suffix(&value, library_prefix));
+        }
+    }
+    Ok(String::new())
+}
+
+/// Extract the relative category portion of a `<shapes name="...">` value
+/// by stripping the library prefix. Returns an empty string when the value
+/// equals the prefix (single-namespace library) or does not match it.
+fn category_suffix(shapes_name: &str, library_prefix: &str) -> String {
+    if let Some(rest) = shapes_name.strip_prefix(library_prefix) {
+        let rest = rest.strip_prefix('.').unwrap_or(rest);
+        normalise_lookup_path(rest)
+    } else {
+        String::new()
+    }
+}
+
+fn normalise_lookup_path(path: &str) -> String {
+    path.trim().to_ascii_lowercase().replace([' ', '-'], "_")
 }
 
 fn handle_open(
@@ -256,7 +360,7 @@ fn num(map: &HashMap<String, String>, key: &str) -> f64 {
 }
 
 fn normalise_stencil_key(name: &str) -> String {
-    name.trim().to_ascii_lowercase().replace([' ', '-'], "_")
+    normalise_lookup_path(name)
 }
 
 /// Coordinate transform from a stencil's native (`stencil.w`, `stencil.h`)
@@ -428,7 +532,7 @@ mod tests {
     #[test]
     fn loads_lambda_stencil() {
         let xml = std::fs::read_to_string("../../stencils/aws4.xml").expect("stencil file");
-        let lib = StencilLibrary::from_xml(&xml).unwrap();
+        let lib = StencilLibrary::from_xml(&xml, "mxgraph.aws4").unwrap();
         let s = lib.lookup("mxgraph.aws4.lambda").expect("lambda present");
         assert!(s.w > 0.0 && s.h > 0.0);
         assert!(!s.commands.is_empty());
@@ -437,9 +541,47 @@ mod tests {
     #[test]
     fn loads_api_gateway_stencil() {
         let xml = std::fs::read_to_string("../../stencils/aws4.xml").expect("stencil file");
-        let lib = StencilLibrary::from_xml(&xml).unwrap();
+        let lib = StencilLibrary::from_xml(&xml, "mxgraph.aws4").unwrap();
         let s = lib.lookup("mxgraph.aws4.api_gateway").expect("present");
         assert!(s.w > 0.0 && s.h > 0.0);
+    }
+
+    #[test]
+    fn loads_azure_virtual_machine() {
+        let xml = std::fs::read_to_string("../../stencils/azure.xml").expect("stencil file");
+        let lib = StencilLibrary::from_xml(&xml, "mxgraph.azure").unwrap();
+        // Azure declares the stencil name as "Virtual Machine"; normalisation
+        // makes it `virtual_machine`. Lookup tolerates the full prefix.
+        assert!(lib.lookup("virtual_machine").is_some());
+        assert!(lib.lookup("mxgraph.azure.virtual_machine").is_some());
+        // SQL Database is one of the popular catalogued shapes.
+        assert!(lib.lookup("sql_database").is_some());
+        // Library is non-trivial in size.
+        assert!(lib.len() >= 80, "azure shape count: {}", lib.len());
+    }
+
+    #[test]
+    fn loads_kubernetes_pod_and_api() {
+        let xml = std::fs::read_to_string("../../stencils/kubernetes.xml").expect("stencil file");
+        let lib = StencilLibrary::from_xml(&xml, "mxgraph.kubernetes").unwrap();
+        assert!(lib.lookup("pod").is_some());
+        assert!(lib.lookup("api").is_some());
+        // K8s sidebar references `prIcon=pod` directly with no library
+        // prefix; the bare name must resolve.
+        assert!(lib.lookup("deploy").is_some());
+    }
+
+    #[test]
+    fn loads_gcp_with_category_paths() {
+        let xml = std::fs::read_to_string("../../stencils/gcp.xml").expect("stencil file");
+        let lib = StencilLibrary::from_xml(&xml, "mxgraph.gcp").unwrap();
+        // The full `mxgraph.gcp.compute.app_engine` style id should resolve.
+        assert!(lib.lookup("mxgraph.gcp.compute.app_engine").is_some());
+        assert!(lib.lookup("compute.app_engine").is_some());
+        // BigQuery lives under big_data.
+        assert!(lib.lookup("big_data.bigquery").is_some());
+        // Cloud Storage under storage_databases.
+        assert!(lib.lookup("storage_databases.cloud_storage").is_some());
     }
 
     #[test]
