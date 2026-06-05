@@ -292,6 +292,7 @@ fn lookup_factory(kind: &str) -> Result<fn(&str, &str) -> Node, AuthorError> {
         ("aws", "kms") => Some(aws::kms),
         ("aws", "kinesis") => Some(aws::kinesis),
         ("aws", "athena") => Some(aws::athena),
+        ("aws", "opensearch") => Some(aws::opensearch),
         ("aws", "cloudwatch") => Some(aws::cloudwatch),
 
         ("azure", "active_directory") => Some(azure::active_directory),

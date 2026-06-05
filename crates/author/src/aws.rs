@@ -196,6 +196,15 @@ pub fn athena(id: &str, label: &str) -> Node {
     aws_node(id, label, "#8C4FFF", "mxgraph.aws4.athena")
 }
 
+/// `OpenSearch` Service tile (Analytics).
+///
+/// drawio labels this service group "`OpenSearch` Service" but still keys the
+/// tile on the pre-rename `elasticsearch_service` stencil; use that name so
+/// the glyph resolves against the vendored `aws4.xml`.
+pub fn opensearch(id: &str, label: &str) -> Node {
+    aws_node(id, label, "#8C4FFF", "mxgraph.aws4.elasticsearch_service")
+}
+
 /// `CloudWatch` tile (Management & Governance).
 pub fn cloudwatch(id: &str, label: &str) -> Node {
     aws_node(id, label, "#E7157B", "mxgraph.aws4.cloudwatch")
@@ -401,6 +410,15 @@ mod tests {
     #[test]
     fn athena_factory() {
         assert_aws_style(&athena("at", "Query"), "mxgraph.aws4.athena", "#8C4FFF");
+    }
+
+    #[test]
+    fn opensearch_factory() {
+        assert_aws_style(
+            &opensearch("os", "Search"),
+            "mxgraph.aws4.elasticsearch_service",
+            "#8C4FFF",
+        );
     }
 
     #[test]

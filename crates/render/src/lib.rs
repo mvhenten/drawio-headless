@@ -124,7 +124,10 @@ fn resolve_stencil(style: &StyleMap) -> Option<(&'static Stencil, LibraryKind)> 
     let shape = style.get("shape")?;
     if shape == "mxgraph.aws4.resourceIcon" {
         let res_icon = style.get("resIcon")?;
-        return aws4().lookup(res_icon).map(|s| (s, LibraryKind::Aws4));
+        return aws4()
+            .lookup(res_icon)
+            .or_else(|| aws4_res_icon_alias(res_icon).and_then(|a| aws4().lookup(a)))
+            .map(|s| (s, LibraryKind::Aws4));
     }
     if shape == "mxgraph.kubernetes.icon2" {
         let pr_icon = style.get("prIcon")?;
@@ -139,6 +142,23 @@ fn resolve_stencil(style: &StyleMap) -> Option<(&'static Stencil, LibraryKind)> 
         return gcp().lookup(shape).map(|s| (s, LibraryKind::Gcp));
     }
     None
+}
+
+/// Map an AWS `resIcon` value that has no matching stencil onto an equivalent
+/// glyph that does. drawio's own catalogue labels the Analytics service group
+/// "`OpenSearch` Service" but still keys its tile on the legacy
+/// `elasticsearch_service` stencil — so the natural-looking
+/// `mxgraph.aws4.opensearch_service` resolves nowhere. Treat it as the
+/// elasticsearch-service glyph (same icon, pre-rename name).
+///
+/// Returns `None` when the icon needs no aliasing, so the caller only pays the
+/// second lookup on a miss.
+fn aws4_res_icon_alias(res_icon: &str) -> Option<&'static str> {
+    let normalised = res_icon.rsplit('.').next().unwrap_or(res_icon);
+    match normalised {
+        "opensearch_service" => Some("elasticsearch_service"),
+        _ => None,
+    }
 }
 
 /// Render a `.drawio` XML string to SVG.
@@ -475,6 +495,40 @@ mod tests {
         assert!(svg.starts_with("<svg"));
         assert!(svg.contains("<rect"));
         assert!(svg.contains("<path")); // stencil glyph rendered
+    }
+
+    #[test]
+    fn raw_opensearch_res_icon_resolves_via_alias() {
+        // `mxgraph.aws4.opensearch_service` is the natural-looking resIcon a
+        // hand-authored raw style reaches for, but no stencil carries that
+        // name — drawio keys the OpenSearch tile on `elasticsearch_service`.
+        // The alias must resolve it so the glyph renders instead of a bare
+        // fill rect.
+        let xml = r#"
+<mxfile compressed="false"><diagram><mxGraphModel><root>
+<mxCell id="0"/><mxCell id="1" parent="0"/>
+<mxCell id="os" value="OpenSearch" vertex="1" parent="1" style="shape=mxgraph.aws4.resourceIcon;fillColor=#3334B9;resIcon=mxgraph.aws4.opensearch_service;">
+  <mxGeometry x="40" y="40" width="78" height="78" as="geometry"/>
+</mxCell>
+</root></mxGraphModel></diagram></mxfile>"#;
+        let svg = render(xml).unwrap();
+        assert!(
+            svg.contains("<path"),
+            "expected stencil glyph path, got only: {svg}",
+        );
+    }
+
+    #[test]
+    fn aws4_res_icon_alias_maps_opensearch_to_elasticsearch() {
+        assert_eq!(
+            aws4_res_icon_alias("mxgraph.aws4.opensearch_service"),
+            Some("elasticsearch_service"),
+        );
+        assert_eq!(
+            aws4_res_icon_alias("opensearch_service"),
+            Some("elasticsearch_service")
+        );
+        assert_eq!(aws4_res_icon_alias("mxgraph.aws4.lambda"), None);
     }
 
     #[test]
