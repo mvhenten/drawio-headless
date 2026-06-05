@@ -146,7 +146,7 @@ fn resolve_stencil(style: &StyleMap) -> Option<(&'static Stencil, LibraryKind)> 
 
 /// Map an AWS `resIcon` value that has no matching stencil onto an equivalent
 /// glyph that does. drawio's own catalogue labels the Analytics service group
-/// "OpenSearch Service" but still keys its tile on the legacy
+/// "`OpenSearch` Service" but still keys its tile on the legacy
 /// `elasticsearch_service` stencil — so the natural-looking
 /// `mxgraph.aws4.opensearch_service` resolves nowhere. Treat it as the
 /// elasticsearch-service glyph (same icon, pre-rename name).
@@ -524,7 +524,10 @@ mod tests {
             aws4_res_icon_alias("mxgraph.aws4.opensearch_service"),
             Some("elasticsearch_service"),
         );
-        assert_eq!(aws4_res_icon_alias("opensearch_service"), Some("elasticsearch_service"));
+        assert_eq!(
+            aws4_res_icon_alias("opensearch_service"),
+            Some("elasticsearch_service")
+        );
         assert_eq!(aws4_res_icon_alias("mxgraph.aws4.lambda"), None);
     }
 
