@@ -1,23 +1,72 @@
 name: Release
 
-# Builds cross-platform release binaries on a `v*.*.*` tag push, attaches them
-# to the GitHub Release, then publishes the npm wrapper package.
+# Builds cross-platform release binaries, attaches them to the GitHub Release
+# for tag `v<version>`, then publishes the npm wrapper package.
 #
-# Manual `workflow_dispatch` is also supported for testing the build matrix
-# without cutting a real release (the publish jobs are tag-gated).
+# Triggered three ways:
+#   - `workflow_call` from auto-release.yml with an explicit `version` input —
+#     the primary path. auto-release.yml has already created and pushed the tag;
+#     we just build and publish against it. (Calling directly avoids the
+#     GITHUB_TOKEN tag-push not retriggering `on: push` workflows.)
+#   - `push` of a `v*.*.*` tag — manual/legacy path (e.g. a hand-pushed tag).
+#   - `workflow_dispatch` — smoke-test the build matrix without publishing
+#     (no tag ⇒ release/npm jobs are skipped).
 
 on:
   push:
     tags:
       - "v*.*.*"
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      version:
+        description: "Version to release, without leading v (e.g. 0.2.0)."
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 jobs:
+  # Resolve the version + tag once, from whichever trigger fired, so every
+  # downstream job reads the same source of truth.
+  setup:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+      release: ${{ steps.v.outputs.release }}
+    steps:
+      - id: v
+        shell: bash
+        run: |
+          set -eu
+          if [ -n "${{ inputs.version }}" ]; then
+            version="${{ inputs.version }}"
+          elif [ "${{ github.ref_type }}" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="0.0.0-dev"
+          fi
+          # Whether to actually cut a release (GH Release + npm). True when
+          # invoked via workflow_call or a tag push; false for a bare
+          # workflow_dispatch smoke test.
+          if [ -n "${{ inputs.version }}" ] || [ "${{ github.ref_type }}" = "tag" ]; then
+            release=true
+          else
+            release=false
+          fi
+          {
+            echo "version=${version}"
+            echo "tag=v${version}"
+            echo "release=${release}"
+          } >> "$GITHUB_OUTPUT"
+          echo "resolved version=${version} release=${release}"
+
   build:
     name: build ${{ matrix.target }}
+    needs: setup
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -44,7 +93,12 @@ jobs:
             cross: false
             archive: zip
     steps:
+      # Check out the tagged commit. On workflow_call the workflow ref is the
+      # caller's branch (main); the tag was pushed first by auto-release.yml, so
+      # building it gives the exact bumped/tagged tree.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.setup.outputs.tag }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -77,12 +131,11 @@ jobs:
       - name: Stage artifact (unix)
         if: matrix.archive == 'tar.gz'
         shell: bash
+        env:
+          VERSION: ${{ needs.setup.outputs.version }}
         run: |
           set -eu
-          version="${GITHUB_REF_NAME#v}"
-          if [ -z "$version" ] || [ "$version" = "$GITHUB_REF_NAME" ]; then
-            version="0.0.0-dev"
-          fi
+          version="$VERSION"
           stage="drawio-headless-${version}-${{ matrix.target }}"
           mkdir -p "dist/${stage}"
           cp "target/${{ matrix.target }}/release/drawio-headless" "dist/${stage}/drawio-headless"
@@ -96,9 +149,10 @@ jobs:
       - name: Stage artifact (windows)
         if: matrix.archive == 'zip'
         shell: pwsh
+        env:
+          VERSION: ${{ needs.setup.outputs.version }}
         run: |
-          $version = $env:GITHUB_REF_NAME -replace '^v',''
-          if (-not $version -or $version -eq $env:GITHUB_REF_NAME) { $version = '0.0.0-dev' }
+          $version = $env:VERSION
           $stage = "drawio-headless-$version-${{ matrix.target }}"
           New-Item -ItemType Directory -Force -Path "dist/$stage" | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/drawio-headless.exe" "dist/$stage/drawio-headless.exe"
@@ -121,8 +175,8 @@ jobs:
 
   release:
     name: GitHub Release
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [setup, build]
+    if: needs.setup.outputs.release == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -136,6 +190,9 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          # Pin the tag explicitly: on workflow_call github.ref is the caller's
+          # branch, not the tag, so the default ref-based tag would be wrong.
+          tag_name: ${{ needs.setup.outputs.tag }}
           files: |
             dist/*.tar.gz
             dist/*.zip
@@ -145,13 +202,15 @@ jobs:
 
   publish-npm:
     name: Publish npm package
-    needs: release
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [setup, release]
+    if: needs.setup.outputs.release == 'true'
     runs-on: ubuntu-latest
     env:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.setup.outputs.tag }}
 
       - uses: actions/setup-node@v4
         with:
@@ -160,10 +219,11 @@ jobs:
 
       - name: Sync npm package version to tag
         working-directory: npm
+        env:
+          VERSION: ${{ needs.setup.outputs.version }}
         run: |
           set -eu
-          version="${GITHUB_REF_NAME#v}"
-          node -e "const fs=require('fs');const p=require('./package.json');p.version='${version}';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');"
+          node -e "const fs=require('fs');const p=require('./package.json');p.version=process.env.VERSION;fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');"
           head -5 package.json
 
       - name: Publish to npm

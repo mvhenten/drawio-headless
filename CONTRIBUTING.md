@@ -15,6 +15,42 @@ cargo fmt --all --check
 
 GitHub Actions runs the full suite on every push.
 
+## Releasing
+
+Merging to `main` releases — there is no manual tagging. On every push to
+`main`, `.github/workflows/auto-release.yml`:
+
+1. Computes the next version from the Conventional Commits since the last tag
+   (`scripts/next-version.sh`: `fix:` → patch, `feat:` → minor, `!`/
+   `BREAKING CHANGE:` → major; nothing releasable → it no-ops).
+2. Bumps the version everywhere it lives — `Cargo.toml`, `Cargo.lock`,
+   `npm/package.json` — via `scripts/bump-version.sh`.
+3. Commits `chore(release): vX.Y.Z [skip-release]`, tags `vX.Y.Z`, pushes both.
+4. Invokes `release.yml` (via `workflow_call`) to build the binary matrix,
+   attach it to a GitHub Release, and publish the npm wrapper.
+
+The `[skip-release]` marker on the bump commit stops the resulting push from
+triggering another release (the workflow's top-level `if` guard skips it).
+
+So commit messages drive the version. Use Conventional Commit prefixes; the PR
+squash-merge subject is what `next-version.sh` reads.
+
+### Trigger chain & required settings
+
+- `auto-release.yml` calls `release.yml` directly via `workflow_call` **on
+  purpose**: a tag pushed with the default `GITHUB_TOKEN` does *not* retrigger
+  a workflow listening on `push: tags`, so a plain "push tag and hope
+  release.yml fires" would silently never build. The direct call sidesteps that
+  with no extra secret.
+- **`NPM_TOKEN`** repo secret is required for the npm publish step. Without it,
+  the GitHub Release (binaries) still publishes and the npm job logs a skip —
+  the binary distribution works, npm just won't update.
+- The bot push needs `contents: write` (set on the workflow) and the repo's
+  Actions setting **"Allow GitHub Actions to create and approve pull requests"**
+  is *not* needed (we push commits/tags, not PRs), but **"Read and write
+  permissions"** must be allowed for `GITHUB_TOKEN`, or the per-workflow
+  `permissions: contents: write` must be honoured (it is, by default).
+
 ## Snapshot tests (visual regression)
 
 `crates/closed-loop-test/tests/snapshots.rs` renders a handful of fixed

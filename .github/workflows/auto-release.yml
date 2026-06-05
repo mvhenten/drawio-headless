@@ -1,0 +1,96 @@
+name: Auto release
+
+# Merge to main == release. On every push to main this workflow computes the
+# next semver from the Conventional Commits since the last tag, bumps the
+# version everywhere it lives, commits the bump, tags it, pushes the tag, and
+# then invokes the Release workflow to build binaries + publish.
+#
+# No manual tagging. No release-please action — just two small scripts
+# (scripts/next-version.sh, scripts/bump-version.sh) so the logic is auditable.
+#
+# Loop guard: the bump commit is `chore(release): vX.Y.Z [skip-release]`; this
+# workflow skips when the head commit carries `[skip-release]`. Belt and braces,
+# next-version.sh also returns "no release" when the range holds no
+# feat/fix/breaking commit, and a `chore:` bump commit is not releasable anyway.
+
+on:
+  push:
+    branches: [main]
+
+# Skip entirely when the push is our own bump commit. (`contains` on the head
+# commit message — the bump commit is always a single commit at the tip.)
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    name: Compute + tag version
+    if: ${{ !contains(github.event.head_commit.message, '[skip-release]') }}
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.compute.outputs.version }}
+      release: ${{ steps.compute.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # need full history + tags for next-version.sh
+
+      - name: Compute next version
+        id: compute
+        shell: bash
+        run: |
+          set -euo pipefail
+          if version="$(scripts/next-version.sh)"; then
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "version=${version}" >> "$GITHUB_OUTPUT"
+            echo "Next version: ${version}"
+          else
+            code=$?
+            if [ "$code" -eq 10 ]; then
+              echo "release=false" >> "$GITHUB_OUTPUT"
+              echo "No releasable commits since last tag — nothing to do."
+            else
+              echo "next-version.sh failed with exit ${code}" >&2
+              exit "$code"
+            fi
+          fi
+
+      - name: Bump, commit, tag, push
+        if: steps.compute.outputs.release == 'true'
+        shell: bash
+        env:
+          VERSION: ${{ steps.compute.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          scripts/bump-version.sh "$VERSION"
+
+          git add Cargo.toml Cargo.lock npm/package.json
+          git commit -m "chore(release): v${VERSION} [skip-release]"
+          git tag "v${VERSION}"
+
+          # Push the bump commit and the tag. The commit lands on main carrying
+          # [skip-release], so the re-triggered Auto release run no-ops at the
+          # `if` guard above. The tag is pushed for the record and so install.sh
+          # "latest" resolves it; the actual build is invoked below via
+          # workflow_call (a GITHUB_TOKEN tag push does NOT retrigger
+          # release.yml's `on: push`).
+          git push origin HEAD:main
+          git push origin "v${VERSION}"
+
+  release:
+    name: Build + publish release
+    needs: prepare
+    if: needs.prepare.outputs.release == 'true'
+    uses: ./.github/workflows/release.yml
+    with:
+      version: ${{ needs.prepare.outputs.version }}
+    permissions:
+      contents: write
+    secrets: inherit
