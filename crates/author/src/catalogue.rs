@@ -181,6 +181,11 @@ pub const ENTRIES: &[Entry] = &[
     },
     Entry {
         library: "aws",
+        key: "opensearch",
+        category: "Analytics",
+    },
+    Entry {
+        library: "aws",
         key: "cloudwatch",
         category: "Management & Governance",
     },

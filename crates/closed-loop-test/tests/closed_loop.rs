@@ -12,7 +12,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use drawio_author::{Diagram, GroupKind, GroupOpts, aws};
+use drawio_author::{Diagram, GroupKind, GroupOpts, Node, aws};
 use resvg::usvg;
 
 fn out_dir() -> PathBuf {
@@ -233,6 +233,48 @@ fn group_boundary_renders_as_dashed_rect() {
     fs::write(out.join("group-boundary.svg"), &svg).expect("write svg");
     assert!(svg.contains("stroke-dasharray"), "dashed boundary: {svg}");
     assert!(svg.contains("Account A"), "group label: {svg}");
+}
+
+#[test]
+fn opensearch_curated_and_raw_res_icon_render_glyph() {
+    // Regression for the "raw resIcon renders as a plain box" bug. Both the
+    // curated `aws::opensearch` factory and a hand-authored raw node carrying
+    // the canonical `resIcon=mxgraph.aws4.opensearch_service` style must
+    // resolve to a real stencil glyph — i.e. the SVG must contain <path> data,
+    // not just the fill rect.
+    let out = out_dir();
+    let mut diagram = Diagram::new("OpenSearch");
+    // Curated factory.
+    diagram.add_node(aws::opensearch("os", "OpenSearch").at(40.0, 40.0));
+    // Raw escape hatch with the exact style string from the bug report.
+    diagram.add_node(Node::raw(
+        "os-raw",
+        220.0,
+        40.0,
+        78.0,
+        78.0,
+        "OpenSearch Raw",
+        "sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=#4D72F3;\
+         gradientDirection=north;fillColor=#3334B9;strokeColor=#ffffff;dashed=0;\
+         verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;\
+         fontSize=12;aspect=fixed;shape=mxgraph.aws4.resourceIcon;\
+         resIcon=mxgraph.aws4.opensearch_service;",
+    ));
+
+    let xml = diagram.to_xml();
+    fs::write(out.join("opensearch.drawio"), &xml).expect("write drawio");
+    assert!(xml.contains("resIcon=mxgraph.aws4.elasticsearch_service"));
+    assert!(xml.contains("resIcon=mxgraph.aws4.opensearch_service"));
+
+    let svg = drawio_render::render(&xml).expect("render");
+    fs::write(out.join("opensearch.svg"), &svg).expect("write svg");
+    // Two tiles, each producing at least one stencil <path>. A bare fill rect
+    // (the pre-fix behaviour) would yield zero paths.
+    let path_count = svg.matches("<path").count();
+    assert!(
+        path_count >= 2,
+        "expected stencil paths from both opensearch tiles, got {path_count} in: {svg}",
+    );
 }
 
 #[test]
