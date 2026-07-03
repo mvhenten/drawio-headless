@@ -21,10 +21,12 @@ fn main() -> std::io::Result<()> {
     let athena = d.add_node(aws::athena("athena", "Ad-hoc queries").at(680.0, 600.0));
 
     d.connect(&source, &stream);
+    // Fan out from the stream's bottom quarter-points (never a corner —
+    // issue #49) so the two lanes' departures don't share an endpoint.
     d.connect(&stream, &processor)
-        .exit(0.0, 1.0)
+        .exit(0.25, 1.0)
         .entry(0.5, 0.0);
-    d.connect(&stream, &raw).exit(1.0, 1.0).entry(0.5, 0.0);
+    d.connect(&stream, &raw).exit(0.75, 1.0).entry(0.5, 0.0);
     d.connect(&processor, &cache);
     d.connect(&raw, &athena);
 
