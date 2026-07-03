@@ -156,8 +156,10 @@ around the nodes that belong to it is enough.
 | `entry_y` | number  | no       | `0..=1`; pin target-side attachment y. |
 
 `exit_x`/`exit_y` (and `entry_x`/`entry_y`) are honoured only when both
-members of the pair are set; otherwise the renderer's points-based picker
-chooses. Values outside `[0, 1]` are clamped, matching drawio's behaviour.
+members of the pair are set; otherwise the renderer defaults to the
+nearest side-centre (never a corner), choosing the entry side so the
+route's final segment lands perpendicular to it. Values outside `[0, 1]`
+are clamped, matching drawio's behaviour.
 
 ## Errors
 

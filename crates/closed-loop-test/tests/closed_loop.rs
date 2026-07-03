@@ -177,10 +177,10 @@ fn orthogonal_edges_round_trip_to_png() {
 #[test]
 fn explicit_entry_exit_overrides_round_trip() {
     // Three icons across the canvas. The middle edge declares explicit
-    // exit/entry on right-mid -> left-mid. The other edges use the v0
-    // points-based picker. Asserts that the override survives author ->
-    // XML -> render and that the rendered SVG places the segment exactly
-    // at the requested perimeter coordinates.
+    // exit/entry on right-mid -> left-mid. The other edge is unconstrained
+    // and gets the default side-centre picker. Asserts that the override
+    // survives author -> XML -> render and that the rendered SVG places
+    // the segment exactly at the requested perimeter coordinates.
     let out = out_dir();
     let mut diagram = Diagram::new("EntryExitOverrides");
     let a = diagram.add_node(aws::api_gateway("api", "API").at(0.0, 0.0));
