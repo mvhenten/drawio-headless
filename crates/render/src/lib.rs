@@ -9,17 +9,17 @@
 //! 3. For each vertex bound to a known stencil library (AWS / Azure / GCP /
 //!    Kubernetes): resolve the glyph against the matching bundled
 //!    [`stencil::StencilLibrary`] and emit SVG.
-//! 4. For each edge: route between the picked connection points. An
-//!    explicit `exitX/exitY`/`entryX/entryY` override wins over the default
-//!    side-centre pick — unless it names an exact corner (both members `0`
-//!    or `1`), which is nudged to a quarter-point on the same side instead
-//!    (issue #49): no departure or arrival point, pinned or defaulted, ever
-//!    lands on a corner. Absent an override, the endpoint snaps to the
-//!    nearest side-centre of the cell, and the unpinned side of the pair is
-//!    chosen so the route's final segment lands perpendicular to the side it
-//!    enters (see [`edge_endpoints`]). Edges declaring
-//!    `edgeStyle=orthogonalEdgeStyle` render as a two-segment right-angle
-//!    polyline (one corner); other edges fall back to a straight line.
+//! 4. For each edge: route between the picked connection points, following
+//!    the rules in `docs/edge-routing.md` ([`routing`]). An explicit
+//!    `exitX/exitY`/`entryX/entryY` override wins over the default pick —
+//!    unless it names an exact corner (both members `0` or `1`), which is
+//!    nudged to a quarter-point on the same side instead (issue #49): no
+//!    departure or arrival point, pinned or defaulted, ever lands on a
+//!    corner. Absent an override, the endpoint is distributed across a
+//!    shared side alongside any other edges touching it, with a minimum
+//!    jetty stub and lane separation from other routes. Edges declaring
+//!    `edgeStyle=orthogonalEdgeStyle` render as a right-angle polyline;
+//!    other edges fall back to a straight line between the same endpoints.
 //!    Endpoints carry a simple arrowhead.
 //!
 //! A vertex's `rotation` style key rotates the rendered shape (tile/glyph,
@@ -50,6 +50,7 @@
 
 pub mod inflate;
 pub mod model;
+mod routing;
 pub mod stencil;
 pub mod style;
 
@@ -57,8 +58,9 @@ use std::fmt::Write as _;
 use std::sync::OnceLock;
 
 use crate::model::{Edge, Model, Vertex};
+use crate::routing::Route;
 use crate::stencil::{CellBounds, Stencil, StencilLibrary, render_stencil_to_svg};
-use crate::style::{EdgeEndpoints, StyleMap};
+use crate::style::StyleMap;
 
 /// Bundled AWS stencil source (about 6 MB). Lives at compile time so the
 /// library is self-contained.
@@ -216,8 +218,10 @@ fn render_model(model: &Model) -> String {
             render_group(&mut svg, v);
         }
     }
-    for e in &model.edges {
-        render_edge(&mut svg, model, e);
+    let routes = routing::route_edges(model);
+    for (e, route) in model.edges.iter().zip(&routes) {
+        let Some(route) = route else { continue };
+        render_edge(&mut svg, e, route);
     }
     for v in &model.vertices {
         if !is_group(&v.style) {
@@ -401,16 +405,12 @@ fn render_vertex(out: &mut String, v: &Vertex) {
     }
 }
 
-fn render_edge(out: &mut String, model: &Model, e: &Edge) {
-    let Some(src) = model.vertices.iter().find(|v| v.id == e.source) else {
-        return;
-    };
-    let Some(tgt) = model.vertices.iter().find(|v| v.id == e.target) else {
-        return;
-    };
+/// Draw one edge's already-routed path ([`routing::route_edges`]). A
+/// non-orthogonal edge (no `edgeStyle=orthogonalEdgeStyle`) ignores the
+/// route's interior bends and draws a straight line between the same two
+/// endpoints, matching drawio's own fallback for that style.
+fn render_edge(out: &mut String, e: &Edge, route: &Route) {
     let style = StyleMap::parse(&e.style);
-    let overrides = EdgeEndpoints::from_style(&style);
-    let (sx, sy, tx, ty) = edge_endpoints(src, tgt, overrides.exit, overrides.entry);
     let end_arrow = style.get_or("endArrow", "open");
     let marker_end = if end_arrow == "none" {
         ""
@@ -419,248 +419,27 @@ fn render_edge(out: &mut String, model: &Model, e: &Edge) {
     };
 
     let orthogonal = style.get("edgeStyle") == Some("orthogonalEdgeStyle");
-    if orthogonal && let Some((mx, my)) = orthogonal_corner(src, (sx, sy), (tx, ty)) {
+    if orthogonal && route.points.len() > 2 {
+        let mut d = String::new();
+        for (i, (x, y)) in route.points.iter().enumerate() {
+            let cmd = if i == 0 { "M" } else { "L" };
+            let _ = write!(d, "{cmd} {x} {y} ");
+        }
         let _ = write!(
             out,
-            "<path d=\"M {sx} {sy} L {mx} {my} L {tx} {ty}\" fill=\"none\" \
-             stroke=\"#232F3E\" stroke-width=\"1.5\"{marker_end}/>"
+            "<path d=\"{}\" fill=\"none\" stroke=\"#232F3E\" stroke-width=\"1.5\"{marker_end}/>",
+            d.trim_end()
         );
         return;
     }
 
+    let (sx, sy) = route.points[0];
+    let (tx, ty) = *route.points.last().expect("route always has >= 2 points");
     let _ = write!(
         out,
         "<line x1=\"{sx}\" y1=\"{sy}\" x2=\"{tx}\" y2=\"{ty}\" \
          stroke=\"#232F3E\" stroke-width=\"1.5\"{marker_end}/>"
     );
-}
-
-/// Compute the single corner of a two-segment right-angle route from
-/// `start` to `end`, given the cell `start` sits on.
-///
-/// The orientation of the leading segment is chosen by which side of the
-/// source cell the start endpoint lies on:
-/// - start on a vertical side (left/right): leave horizontally — corner is
-///   `(end.x, start.y)`.
-/// - start on a horizontal side (top/bottom): leave vertically — corner is
-///   `(start.x, end.y)`.
-///
-/// Returns `None` when the endpoints are colinear (same x or y) so the
-/// caller can degrade to a single straight segment. Also returns `None` if
-/// the start point is not on any edge of the source cell (e.g. it landed
-/// at the cell centre because no connection points were declared) — there
-/// is no sensible orientation to choose in that case.
-fn orthogonal_corner(src: &Vertex, start: (f64, f64), end: (f64, f64)) -> Option<(f64, f64)> {
-    // Colinear: a single segment is already the right-angle route.
-    if (start.0 - end.0).abs() < 1e-9 || (start.1 - end.1).abs() < 1e-9 {
-        return None;
-    }
-    let on_vertical_side =
-        (start.0 - src.x).abs() < 1e-6 || (start.0 - (src.x + src.w)).abs() < 1e-6;
-    let on_horizontal_side =
-        (start.1 - src.y).abs() < 1e-6 || (start.1 - (src.y + src.h)).abs() < 1e-6;
-    if on_vertical_side {
-        // Leave horizontally first.
-        Some((end.0, start.1))
-    } else if on_horizontal_side {
-        // Leave vertically first.
-        Some((start.0, end.1))
-    } else {
-        None
-    }
-}
-
-/// One of the four cardinal sides of a rectangular cell an edge can attach
-/// to. Defaults always resolve to a side's *centre* — never a corner
-/// (issue #40).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Side {
-    Top,
-    Bottom,
-    Left,
-    Right,
-}
-
-impl Side {
-    /// `true` for the two sides that run horizontally (top/bottom). A
-    /// segment travels perpendicular to the side it lands on head-on, so a
-    /// route entering a horizontal side must arrive travelling vertically,
-    /// and vice versa — see [`edge_endpoints`].
-    fn is_horizontal_side(self) -> bool {
-        matches!(self, Side::Top | Side::Bottom)
-    }
-
-    /// The other side of the same axis-aligned pair (`Top`/`Bottom` or
-    /// `Left`/`Right`). Used for the colinear case, where the route is a
-    /// single straight segment and both ends must share the same axis.
-    fn opposite(self) -> Side {
-        match self {
-            Side::Top => Side::Bottom,
-            Side::Bottom => Side::Top,
-            Side::Left => Side::Right,
-            Side::Right => Side::Left,
-        }
-    }
-}
-
-/// Absolute coordinate of `cell`'s side-centre for `side`.
-fn side_centre(cell: &Vertex, side: Side) -> (f64, f64) {
-    match side {
-        Side::Top => (cell.x + cell.w / 2.0, cell.y),
-        Side::Bottom => (cell.x + cell.w / 2.0, cell.y + cell.h),
-        Side::Left => (cell.x, cell.y + cell.h / 2.0),
-        Side::Right => (cell.x + cell.w, cell.y + cell.h / 2.0),
-    }
-}
-
-/// Classify an explicit normalised override `(nx, ny)` (an `exitX/exitY` or
-/// `entryX/entryY` pair, each `0..1`) by which side of the cell it sits on.
-/// Used to infer the *orientation* of a pinned anchor, so the other
-/// (unpinned) end of the edge can still be defaulted sensibly, and (via
-/// [`nudge_corner_override`]) to pick which side an exact-corner override
-/// gets moved onto.
-///
-/// An exact corner override (both members at `0`/`1`) is a tie; it reads as
-/// the horizontal side (`Top`/`Bottom`), a deliberate, arbitrary but
-/// deterministic choice.
-fn side_of_override(nx: f32, ny: f32) -> Side {
-    if ny <= 0.0 {
-        Side::Top
-    } else if ny >= 1.0 {
-        Side::Bottom
-    } else if nx <= 0.0 {
-        Side::Left
-    } else {
-        Side::Right
-    }
-}
-
-/// Move an explicit `exitX/exitY`/`entryX/entryY` override off a corner.
-///
-/// A pinned anchor is honoured verbatim *unless* it names an exact corner
-/// (both members at the extreme `0`/`1`) — that reads as ambiguous between
-/// its two adjacent sides rather than a deliberate side attachment, and
-/// literally rendering it leaves the edge departing or arriving at the
-/// cell's corner (issue #49). Corners are common by accident: an author
-/// fanning out several edges from one box picks one bottom corner per edge
-/// to keep them visually separate, without meaning "attach to the corner"
-/// specifically.
-///
-/// The override is reinterpreted as a quarter-point on the side
-/// [`side_of_override`] already ties a corner to (`Top`/`Bottom`), offset
-/// toward whichever half the pinned corner named — e.g. `(0, 1)`
-/// (bottom-left) becomes `(0.25, 1)`: still the bottom side, still biased
-/// left, just off the exact corner. This preserves a fan-out's visual
-/// separation while guaranteeing every attachment point sits on a side,
-/// never a corner.
-///
-/// A non-corner override (either member strictly inside `(0, 1)`) is
-/// returned unchanged.
-fn nudge_corner_override(nx: f32, ny: f32) -> (f32, f32) {
-    let is_extreme = |v: f32| v <= 0.0 || v >= 1.0;
-    if !is_extreme(nx) || !is_extreme(ny) {
-        return (nx, ny);
-    }
-    if side_of_override(nx, ny).is_horizontal_side() {
-        (if nx <= 0.0 { 0.25 } else { 0.75 }, ny)
-    } else {
-        (nx, if ny <= 0.0 { 0.25 } else { 0.75 })
-    }
-}
-
-/// The side of a cell, restricted to the given orientation, that faces the
-/// direction `(dx, dy)` points *away* from the cell — i.e. the side nearest
-/// whatever lies in that direction. `horizontal` selects between
-/// `Top`/`Bottom` (`true`) and `Left`/`Right` (`false`).
-fn facing_side(horizontal: bool, dx: f64, dy: f64) -> Side {
-    if horizontal {
-        if dy >= 0.0 { Side::Bottom } else { Side::Top }
-    } else if dx >= 0.0 {
-        Side::Right
-    } else {
-        Side::Left
-    }
-}
-
-/// Resolve both ends of an edge between `src` and `tgt`.
-///
-/// An explicit override (`exitX/exitY` or `entryX/entryY`) is honoured
-/// verbatim — this function never second-guesses a pinned anchor — except
-/// when it names an exact corner, which [`nudge_corner_override`] moves to a
-/// quarter-point on the same side first (issue #49).
-///
-/// Absent an override, the endpoint snaps to one of the four side-centre
-/// anchors, never a corner. When the unpinned end still needs a default
-/// side, it is chosen relative to whichever side the *other* end already
-/// has (pinned or just defaulted):
-/// - boxes that are colinear (share an x or y, so a straight line reaches
-///   head-on with no bend) mirror the other end's orientation — the same
-///   axis, opposite side;
-/// - otherwise an L-bend is unavoidable, and the router's single corner
-///   always flips the direction of travel onto the perpendicular axis (see
-///   [`orthogonal_corner`]), so the unpinned side must sit on *that* axis
-///   to be entered head-on instead of sliding along it.
-///
-/// When neither end is pinned, the exit side is picked first — whichever
-/// axis has the larger centre-to-centre offset — and the entry side then
-/// follows from it by the same rule.
-fn edge_endpoints(
-    src: &Vertex,
-    tgt: &Vertex,
-    exit_override: Option<(f32, f32)>,
-    entry_override: Option<(f32, f32)>,
-) -> (f64, f64, f64, f64) {
-    const EPS: f64 = 1e-6;
-
-    let exit_override = exit_override.map(|(nx, ny)| nudge_corner_override(nx, ny));
-    let entry_override = entry_override.map(|(nx, ny)| nudge_corner_override(nx, ny));
-
-    let src_centre = (src.x + src.w / 2.0, src.y + src.h / 2.0);
-    let tgt_centre = (tgt.x + tgt.w / 2.0, tgt.y + tgt.h / 2.0);
-    let dx = tgt_centre.0 - src_centre.0;
-    let dy = tgt_centre.1 - src_centre.1;
-    let colinear = dx.abs() < EPS || dy.abs() < EPS;
-
-    let (ex, ey, exit_side) = if let Some((nx, ny)) = exit_override {
-        (
-            src.x + f64::from(nx) * src.w,
-            src.y + f64::from(ny) * src.h,
-            side_of_override(nx, ny),
-        )
-    } else {
-        let side = match entry_override {
-            // Entry is pinned: exit takes the perpendicular axis
-            // (or mirrors it, if the boxes are colinear).
-            Some((enx, eny)) => {
-                let entry_side = side_of_override(enx, eny);
-                if colinear {
-                    entry_side.opposite()
-                } else {
-                    facing_side(!entry_side.is_horizontal_side(), dx, dy)
-                }
-            }
-            // Neither end pinned: exit leads, picked by the dominant
-            // centre-to-centre axis.
-            None => facing_side(dy.abs() >= dx.abs(), dx, dy),
-        };
-        let (x, y) = side_centre(src, side);
-        (x, y, side)
-    };
-
-    let (tx, ty) = if let Some((nx, ny)) = entry_override {
-        (tgt.x + f64::from(nx) * tgt.w, tgt.y + f64::from(ny) * tgt.h)
-    } else {
-        let side = if colinear {
-            exit_side.opposite()
-        } else {
-            // Entry faces back toward the source, so the direction is
-            // negated relative to the src -> tgt vector used above.
-            facing_side(!exit_side.is_horizontal_side(), -dx, -dy)
-        };
-        side_centre(tgt, side)
-    };
-
-    (ex, ey, tx, ty)
 }
 
 pub(crate) fn escape_text(s: &str) -> String {
@@ -770,177 +549,6 @@ mod tests {
         assert_eq!(aws4_res_icon_alias("mxgraph.aws4.lambda"), None);
     }
 
-    /// Build a plain, style-less `Vertex` at the given box — the new
-    /// default-endpoint logic works purely off cell geometry, not a
-    /// declared `points=` constraint set, so tests don't need one.
-    fn plain_vertex(id: &str, x: f64, y: f64, w: f64, h: f64) -> Vertex {
-        Vertex {
-            id: id.into(),
-            label: String::new(),
-            style: String::new(),
-            x,
-            y,
-            w,
-            h,
-        }
-    }
-
-    #[test]
-    fn default_endpoints_snap_to_side_centres_same_row() {
-        // Two boxes on the same row (aligned y): a straight horizontal
-        // line, so both ends share the same orientation (left/right).
-        let a = plain_vertex("a", 0.0, 0.0, 78.0, 78.0);
-        let b = plain_vertex("b", 300.0, 0.0, 78.0, 78.0);
-        let (sx, sy, tx, ty) = edge_endpoints(&a, &b, None, None);
-        assert_eq!((sx, sy), (78.0, 39.0), "source should be A's right-mid");
-        assert_eq!((tx, ty), (300.0, 39.0), "target should be B's left-mid");
-    }
-
-    #[test]
-    fn default_endpoints_never_land_on_a_corner_when_diagonal() {
-        // Two boxes offset both horizontally and vertically (issue #40's
-        // reported pattern) — neither end may resolve to a corner, and the
-        // route must land head-on: the exit side and entry side must be on
-        // perpendicular axes so the router's single bend (see
-        // `orthogonal_corner`) arrives travelling straight into the
-        // entered side rather than sliding along it.
-        let a = plain_vertex("a", 0.0, 0.0, 78.0, 78.0);
-        let b = plain_vertex("b", 300.0, 200.0, 78.0, 78.0);
-        let (sx, sy, tx, ty) = edge_endpoints(&a, &b, None, None);
-
-        let is_corner = |x: f64, y: f64, v: &Vertex| {
-            let touches_vertical_side = (x - v.x).abs() < 1e-9 || (x - (v.x + v.w)).abs() < 1e-9;
-            let touches_horizontal_side = (y - v.y).abs() < 1e-9 || (y - (v.y + v.h)).abs() < 1e-9;
-            touches_vertical_side && touches_horizontal_side
-        };
-        assert!(
-            !is_corner(sx, sy, &a),
-            "exit landed on a corner: ({sx}, {sy})"
-        );
-        assert!(
-            !is_corner(tx, ty, &b),
-            "entry landed on a corner: ({tx}, {ty})"
-        );
-
-        // |dy| (200) > |dx| (300... wait see below) decides the exit axis;
-        // here |dx| dominates (300 > 200), so exit is A's right-mid.
-        assert_eq!((sx, sy), (78.0, 39.0), "exit should be A's right-mid");
-        // Perpendicular entry: exit is a left/right (vertical) side, so
-        // entry must be a top/bottom (horizontal) side of B — B's top-mid,
-        // since B sits below A.
-        assert_eq!((tx, ty), (339.0, 200.0), "entry should be B's top-mid");
-    }
-
-    #[test]
-    fn default_endpoints_pick_perpendicular_entry_when_vertical_offset_dominates() {
-        // Mirror of the previous case with the dominant axis flipped:
-        // B sits mostly below A rather than mostly beside it, so the exit
-        // is a top/bottom side and the entry must be left/right.
-        let a = plain_vertex("a", 0.0, 0.0, 78.0, 78.0);
-        let b = plain_vertex("b", 200.0, 300.0, 78.0, 78.0);
-        let (sx, sy, tx, ty) = edge_endpoints(&a, &b, None, None);
-        assert_eq!((sx, sy), (39.0, 78.0), "exit should be A's bottom-mid");
-        assert_eq!((tx, ty), (200.0, 339.0), "entry should be B's left-mid");
-    }
-
-    #[test]
-    fn edge_endpoint_overrides_take_priority_over_defaults() {
-        // Both ends explicitly pinned: the override wins verbatim even
-        // though the boxes are diagonally offset (which would otherwise
-        // pick different sides by default).
-        let a = plain_vertex("a", 0.0, 0.0, 78.0, 78.0);
-        let b = plain_vertex("b", 200.0, 300.0, 78.0, 78.0);
-        let exit = Some((1.0_f32, 0.5_f32));
-        let entry = Some((0.0_f32, 0.5_f32));
-        let (sx, sy, tx, ty) = edge_endpoints(&a, &b, exit, entry);
-        assert_eq!((sx, sy), (78.0, 39.0), "source must be right-mid (78, 39)");
-        assert_eq!(
-            (tx, ty),
-            (200.0, 339.0),
-            "target must be left-mid (200, 339)"
-        );
-    }
-
-    #[test]
-    fn one_sided_override_still_gets_a_perpendicular_default_partner() {
-        // Only the exit is pinned (to A's bottom-mid); the entry is left
-        // to default. Since A's bottom is a horizontal side, the entry
-        // must default to a vertical (left/right) side of B, not a
-        // corner and not another horizontal side.
-        let a = plain_vertex("a", 0.0, 0.0, 78.0, 78.0);
-        let b = plain_vertex("b", 300.0, 200.0, 78.0, 78.0);
-        let exit = Some((0.5_f32, 1.0_f32));
-        let (_, _, tx, ty) = edge_endpoints(&a, &b, exit, None);
-        assert_eq!((tx, ty), (300.0, 239.0), "entry should be B's left-mid");
-    }
-
-    #[test]
-    fn explicit_corner_exit_override_is_nudged_off_the_corner() {
-        // Issue #49 repro: a fan-out edge pins its exit to a bottom corner
-        // (as the shipped `event-driven`/`streaming-lanes`/`three-tier-web`
-        // examples did) instead of a side midpoint. The literal corner must
-        // never be used verbatim — it's reinterpreted as a quarter-point on
-        // the bottom side, still biased toward the pinned corner's half.
-        let a = plain_vertex("a", 0.0, 0.0, 78.0, 78.0);
-        let b = plain_vertex("b", 200.0, 300.0, 78.0, 78.0);
-
-        let bottom_left = Some((0.0_f32, 1.0_f32));
-        let (sx, sy, _, _) = edge_endpoints(&a, &b, bottom_left, None);
-        assert_eq!(
-            (sx, sy),
-            (19.5, 78.0),
-            "exit should be A's bottom-quarter-from-left, not the corner (0, 78)"
-        );
-
-        let bottom_right = Some((1.0_f32, 1.0_f32));
-        let (sx, sy, _, _) = edge_endpoints(&a, &b, bottom_right, None);
-        assert_eq!(
-            (sx, sy),
-            (58.5, 78.0),
-            "exit should be A's bottom-quarter-from-right, not the corner (78, 78)"
-        );
-    }
-
-    #[test]
-    fn explicit_corner_entry_override_is_nudged_off_the_corner() {
-        // Same guard on the arrival side: a pinned entry at an exact corner
-        // is nudged to a quarter-point instead of landing on the corner.
-        let a = plain_vertex("a", 0.0, 0.0, 78.0, 78.0);
-        let b = plain_vertex("b", 200.0, 300.0, 78.0, 78.0);
-
-        let top_left = Some((0.0_f32, 0.0_f32));
-        let (_, _, tx, ty) = edge_endpoints(&a, &b, None, top_left);
-        assert_eq!(
-            (tx, ty),
-            (200.0 + 19.5, 300.0),
-            "entry should be B's top-quarter-from-left, not the corner (200, 300)"
-        );
-    }
-
-    #[test]
-    fn all_four_corner_overrides_resolve_to_quarter_points_never_corners() {
-        let src = plain_vertex("a", 0.0, 0.0, 78.0, 78.0);
-        let tgt = plain_vertex("b", 300.0, 300.0, 78.0, 78.0);
-        let corners = [(0.0_f32, 0.0_f32), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)];
-        let is_corner = |x: f64, y: f64, v: &Vertex| {
-            let touches_vertical_side = (x - v.x).abs() < 1e-9 || (x - (v.x + v.w)).abs() < 1e-9;
-            let touches_horizontal_side = (y - v.y).abs() < 1e-9 || (y - (v.y + v.h)).abs() < 1e-9;
-            touches_vertical_side && touches_horizontal_side
-        };
-        for corner in corners {
-            let (sx, sy, _, _) = edge_endpoints(&src, &tgt, Some(corner), None);
-            assert!(
-                !is_corner(sx, sy, &src),
-                "exit override {corner:?} landed on a corner: ({sx}, {sy})"
-            );
-            let (_, _, tx, ty) = edge_endpoints(&src, &tgt, None, Some(corner));
-            assert!(
-                !is_corner(tx, ty, &tgt),
-                "entry override {corner:?} landed on a corner: ({tx}, {ty})"
-            );
-        }
-    }
-
     #[test]
     fn renders_edge_with_explicit_entry_exit_overrides() {
         // Edge style declares exit/entry. The picker on the cells would
@@ -966,89 +574,6 @@ mod tests {
             svg.contains("<line x1=\"78\" y1=\"39\" x2=\"200\" y2=\"39\""),
             "expected colinear straight line at y=39; got: {svg}",
         );
-    }
-
-    #[test]
-    fn orthogonal_corner_horizontal_first_from_right_edge() {
-        // Source endpoint sits on the right edge of source (x = 78). The
-        // route must leave horizontally, so the corner is at (end.x, start.y).
-        let src = Vertex {
-            id: "a".into(),
-            label: String::new(),
-            style: String::new(),
-            x: 0.0,
-            y: 0.0,
-            w: 78.0,
-            h: 78.0,
-        };
-        let corner = orthogonal_corner(&src, (78.0, 39.0), (300.0, 100.0)).unwrap();
-        assert!(
-            (corner.0 - 300.0).abs() < 1e-9,
-            "corner.x = end.x: {corner:?}"
-        );
-        assert!(
-            (corner.1 - 39.0).abs() < 1e-9,
-            "corner.y = start.y: {corner:?}"
-        );
-    }
-
-    #[test]
-    fn orthogonal_corner_vertical_first_from_bottom_edge() {
-        // Source endpoint sits on the bottom edge of source (y = 78). The
-        // route must leave vertically, so the corner is at (start.x, end.y).
-        let src = Vertex {
-            id: "a".into(),
-            label: String::new(),
-            style: String::new(),
-            x: 0.0,
-            y: 0.0,
-            w: 78.0,
-            h: 78.0,
-        };
-        let corner = orthogonal_corner(&src, (39.0, 78.0), (200.0, 300.0)).unwrap();
-        assert!(
-            (corner.0 - 39.0).abs() < 1e-9,
-            "corner.x = start.x: {corner:?}"
-        );
-        assert!(
-            (corner.1 - 300.0).abs() < 1e-9,
-            "corner.y = end.y: {corner:?}"
-        );
-    }
-
-    #[test]
-    fn orthogonal_corner_colinear_endpoints_yield_none() {
-        let src = Vertex {
-            id: "a".into(),
-            label: String::new(),
-            style: String::new(),
-            x: 0.0,
-            y: 0.0,
-            w: 78.0,
-            h: 78.0,
-        };
-        // Same y: a single horizontal segment is already the route.
-        assert!(orthogonal_corner(&src, (78.0, 39.0), (300.0, 39.0)).is_none());
-        // Same x: a single vertical segment is already the route.
-        assert!(orthogonal_corner(&src, (39.0, 78.0), (39.0, 300.0)).is_none());
-    }
-
-    #[test]
-    fn orthogonal_corner_endpoint_not_on_edge_yields_none() {
-        // A point that isn't on any side of the cell (e.g. a cell centre,
-        // which `edge_endpoints` never actually produces but this
-        // lower-level helper doesn't assume) — there is no orientation to
-        // pick.
-        let src = Vertex {
-            id: "a".into(),
-            label: String::new(),
-            style: String::new(),
-            x: 0.0,
-            y: 0.0,
-            w: 78.0,
-            h: 78.0,
-        };
-        assert!(orthogonal_corner(&src, (39.0, 39.0), (300.0, 100.0)).is_none());
     }
 
     #[test]
