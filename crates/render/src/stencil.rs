@@ -4,15 +4,19 @@
 //! like `stencils/aws4.xml`. v0 supports the subset actually used by the AWS
 //! catalog tiles we ship:
 //!
-//! - `<path>`, `<move>`, `<line>`, `<curve>`, `<quad>`, `<close/>`
+//! - `<path>`, `<move>`, `<line>`, `<curve>`, `<quad>`, `<arc>`, `<close/>`
 //! - `<fill/>`, `<stroke/>`, `<fillstroke/>` (painters; we treat all as paint)
 //! - `<ellipse>`, `<rect>`, `<roundrect>` (primitives that produce their own
 //!   SVG nodes)
 //!
-//! Other commands (e.g. `<arc>`, `<save>`/`<restore>`, `<alpha>`,
-//! `<strokecolor>`, `<fillcolor>`) are silently skipped — see issue #7. Some
-//! libraries (notably Azure and GCP) rely on these and will render with
-//! partial fidelity.
+//! `<arc>` maps directly onto an SVG elliptical arc (`A rx ry x-axis-rotation
+//! large-arc-flag sweep-flag x y`) — drawio's mxStencil DSL and SVG share the
+//! same arc parameterisation, so no curve-fitting is needed.
+//!
+//! Other commands (e.g. `<save>`/`<restore>`, `<alpha>`, `<strokecolor>`,
+//! `<fillcolor>`) are silently skipped — see issue #7. Some libraries
+//! (notably Azure and GCP) rely on these and will render with partial
+//! fidelity.
 //!
 //! Multiple libraries
 //! ------------------
@@ -67,6 +71,15 @@ pub enum Cmd {
         y1: f64,
         x2: f64,
         y2: f64,
+    },
+    Arc {
+        rx: f64,
+        ry: f64,
+        x_axis_rotation: f64,
+        large_arc_flag: bool,
+        sweep_flag: bool,
+        x: f64,
+        y: f64,
     },
     Close,
     /// End-of-path paint. The renderer applies the current fill colour.
@@ -254,8 +267,8 @@ fn handle_open(
                 s.commands.push(Cmd::PathBegin);
             }
         }
-        b"move" | b"line" | b"curve" | b"quad" | b"close" | b"fill" | b"stroke" | b"fillstroke"
-        | b"ellipse" | b"rect" | b"roundrect" => {
+        b"move" | b"line" | b"curve" | b"quad" | b"arc" | b"close" | b"fill" | b"stroke"
+        | b"fillstroke" | b"ellipse" | b"rect" | b"roundrect" => {
             if !*in_foreground {
                 return Ok(());
             }
@@ -313,6 +326,15 @@ fn build_cmd(local: &[u8], attrs: &HashMap<String, String>) -> Cmd {
             x2: num(attrs, "x2"),
             y2: num(attrs, "y2"),
         },
+        b"arc" => Cmd::Arc {
+            rx: num(attrs, "rx"),
+            ry: num(attrs, "ry"),
+            x_axis_rotation: num(attrs, "x-axis-rotation"),
+            large_arc_flag: flag(attrs, "large-arc-flag"),
+            sweep_flag: flag(attrs, "sweep-flag"),
+            x: num(attrs, "x"),
+            y: num(attrs, "y"),
+        },
         b"close" => Cmd::Close,
         b"fill" | b"stroke" | b"fillstroke" => Cmd::Paint,
         b"ellipse" => Cmd::Ellipse {
@@ -357,6 +379,13 @@ fn collect_attrs(
 
 fn num(map: &HashMap<String, String>, key: &str) -> f64 {
     map.get(key).and_then(|s| s.parse().ok()).unwrap_or(0.0)
+}
+
+/// Parse a `0`/`1` mxStencil boolean attribute (used by `<arc>`'s
+/// `large-arc-flag` and `sweep-flag`). Any value other than `"1"` is `false`,
+/// matching the DSL's convention.
+fn flag(map: &HashMap<String, String>, key: &str) -> bool {
+    map.get(key).map(String::as_str) == Some("1")
 }
 
 fn normalise_stencil_key(name: &str) -> String {
@@ -468,6 +497,34 @@ pub fn render_stencil_to_svg(
     out
 }
 
+/// Append an SVG elliptical arc command (`A rx ry x-axis-rotation
+/// large-arc-flag sweep-flag x y`) to `path`. Split out of [`emit_cmd`] to
+/// keep that function under clippy's line-count lint.
+#[allow(clippy::too_many_arguments)]
+fn write_arc(
+    path: &mut String,
+    tr: Transform,
+    rx: f64,
+    ry: f64,
+    x_axis_rotation: f64,
+    large_arc_flag: bool,
+    sweep_flag: bool,
+    x: f64,
+    y: f64,
+) {
+    let _ = write!(
+        path,
+        "A {} {} {} {} {} {} {} ",
+        (rx * tr.sx).abs(),
+        (ry * tr.sy).abs(),
+        x_axis_rotation,
+        i32::from(large_arc_flag),
+        i32::from(sweep_flag),
+        tr.tx(x),
+        tr.ty(y)
+    );
+}
+
 fn emit_cmd(cmd: &Cmd, tr: Transform, glyph_color: &str, out: &mut String, path: &mut String) {
     match cmd {
         Cmd::PathBegin => path.clear(),
@@ -506,6 +563,25 @@ fn emit_cmd(cmd: &Cmd, tr: Transform, glyph_color: &str, out: &mut String, path:
                 tr.ty(*y2)
             );
         }
+        Cmd::Arc {
+            rx,
+            ry,
+            x_axis_rotation,
+            large_arc_flag,
+            sweep_flag,
+            x,
+            y,
+        } => write_arc(
+            path,
+            tr,
+            *rx,
+            *ry,
+            *x_axis_rotation,
+            *large_arc_flag,
+            *sweep_flag,
+            *x,
+            *y,
+        ),
         Cmd::Close => path.push_str("Z "),
         Cmd::Paint => {
             if !path.is_empty() {
@@ -518,42 +594,60 @@ fn emit_cmd(cmd: &Cmd, tr: Transform, glyph_color: &str, out: &mut String, path:
                 path.clear();
             }
         }
-        Cmd::Ellipse { x, y, w, h } => {
-            let cx = tr.tx(*x + *w / 2.0);
-            let cy = tr.ty(*y + *h / 2.0);
-            let rx = (*w * tr.sx) / 2.0;
-            let ry = (*h * tr.sy) / 2.0;
-            let _ = write!(
-                out,
-                "<ellipse cx=\"{cx}\" cy=\"{cy}\" rx=\"{rx}\" ry=\"{ry}\" fill=\"{glyph_color}\"/>"
-            );
-        }
-        Cmd::Rect { x, y, w, h } => {
-            let _ = write!(
-                out,
-                "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{}\"/>",
-                tr.tx(*x),
-                tr.ty(*y),
-                *w * tr.sx,
-                *h * tr.sy,
-                glyph_color
-            );
-        }
+        Cmd::Ellipse { x, y, w, h } => emit_ellipse(tr, glyph_color, out, *x, *y, *w, *h),
+        Cmd::Rect { x, y, w, h } => emit_rect(tr, glyph_color, out, *x, *y, *w, *h, 0.0),
         Cmd::RoundRect { x, y, w, h, arc } => {
-            let r = arc * tr.sx;
-            let _ = write!(
-                out,
-                "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" rx=\"{}\" ry=\"{}\" fill=\"{}\"/>",
-                tr.tx(*x),
-                tr.ty(*y),
-                *w * tr.sx,
-                *h * tr.sy,
-                r,
-                r,
-                glyph_color
-            );
+            emit_rect(tr, glyph_color, out, *x, *y, *w, *h, *arc);
         }
     }
+}
+
+/// Emit an `<ellipse>` primitive (the `<ellipse>` stencil command).
+#[allow(clippy::many_single_char_names)]
+fn emit_ellipse(
+    tr: Transform,
+    glyph_color: &str,
+    out: &mut String,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+) {
+    let cx = tr.tx(x + w / 2.0);
+    let cy = tr.ty(y + h / 2.0);
+    let rx = (w * tr.sx) / 2.0;
+    let ry = (h * tr.sy) / 2.0;
+    let _ = write!(
+        out,
+        "<ellipse cx=\"{cx}\" cy=\"{cy}\" rx=\"{rx}\" ry=\"{ry}\" fill=\"{glyph_color}\"/>"
+    );
+}
+
+/// Emit a `<rect>` primitive (the `<rect>`/`<roundrect>` stencil commands —
+/// `corner_arc` is `0.0` for a plain rect).
+#[allow(clippy::too_many_arguments, clippy::many_single_char_names)]
+fn emit_rect(
+    tr: Transform,
+    glyph_color: &str,
+    out: &mut String,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    corner_arc: f64,
+) {
+    let r = corner_arc * tr.sx;
+    let _ = write!(
+        out,
+        "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" rx=\"{}\" ry=\"{}\" fill=\"{}\"/>",
+        tr.tx(x),
+        tr.ty(y),
+        w * tr.sx,
+        h * tr.sy,
+        r,
+        r,
+        glyph_color
+    );
 }
 
 #[cfg(test)]
@@ -638,6 +732,75 @@ mod tests {
         let svg = render_stencil_to_svg(&s, cell, 0.0, "#fff", false);
         assert!(svg.contains("<path"));
         assert!(svg.contains("fill=\"#fff\""));
+    }
+
+    #[test]
+    fn renders_arc_as_svg_elliptical_arc_command() {
+        // Fixture stencil: a rounded-corner tab built from `<arc>` segments,
+        // the shape drawio's own "document" and "queue" AWS glyphs and the
+        // Azure "Cloud" stencil all rely on (see issue #7 — `<arc>` was
+        // previously silently skipped, leaving these glyphs' rounded
+        // corners/silhouette missing).
+        let s = Stencil {
+            name: "rounded-tab".into(),
+            w: 10.0,
+            h: 10.0,
+            commands: vec![
+                Cmd::PathBegin,
+                Cmd::Move(1.5, 0.0),
+                Cmd::Line(8.5, 0.0),
+                Cmd::Arc {
+                    rx: 1.5,
+                    ry: 1.5,
+                    x_axis_rotation: 0.0,
+                    large_arc_flag: false,
+                    sweep_flag: true,
+                    x: 10.0,
+                    y: 1.5,
+                },
+                Cmd::Line(10.0, 10.0),
+                Cmd::Line(0.0, 10.0),
+                Cmd::Line(0.0, 1.5),
+                Cmd::Arc {
+                    rx: 1.5,
+                    ry: 1.5,
+                    x_axis_rotation: 0.0,
+                    large_arc_flag: false,
+                    sweep_flag: true,
+                    x: 1.5,
+                    y: 0.0,
+                },
+                Cmd::Close,
+                Cmd::Paint,
+            ],
+        };
+        let cell = CellBounds {
+            x: 0.0,
+            y: 0.0,
+            w: 10.0,
+            h: 10.0,
+        };
+        let svg = render_stencil_to_svg(&s, cell, 0.0, "#fff", false);
+        // Emitted as a real SVG "A rx ry rot large sweep x y" arc command —
+        // not skipped, not approximated with a line.
+        assert!(
+            svg.contains("A 1.5 1.5 0 0 1 10 1.5"),
+            "expected SVG arc command with unscaled radii; got: {svg}"
+        );
+        assert!(
+            svg.contains("A 1.5 1.5 0 0 1 1.5 0"),
+            "expected second SVG arc command; got: {svg}"
+        );
+    }
+
+    #[test]
+    fn arc_flags_parse_only_literal_one_as_true() {
+        let mut attrs = HashMap::new();
+        attrs.insert("large-arc-flag".to_string(), "1".to_string());
+        attrs.insert("sweep-flag".to_string(), "0".to_string());
+        assert!(flag(&attrs, "large-arc-flag"));
+        assert!(!flag(&attrs, "sweep-flag"));
+        assert!(!flag(&attrs, "missing"));
     }
 
     #[test]

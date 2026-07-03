@@ -10,7 +10,7 @@
 //! drawio-headless compose <input.json> [<output>]
 //!     [--format svg|png] [--keep-drawio <path>] [--stdin]
 //!
-//! drawio-headless list-shapes [--library aws|azure|gcp|k8s|all]
+//! drawio-headless list-shapes [--library aws|azure|gcp|k8s|client|generic|all]
 //!                             [--format text|json]
 //! ```
 //!
@@ -108,6 +108,8 @@ enum LibraryFilter {
     Azure,
     Gcp,
     K8s,
+    Client,
+    Generic,
     All,
 }
 
@@ -118,6 +120,8 @@ impl LibraryFilter {
             Self::Azure => "azure",
             Self::Gcp => "gcp",
             Self::K8s => "k8s",
+            Self::Client => "client",
+            Self::Generic => "generic",
             Self::All => "all",
         }
     }

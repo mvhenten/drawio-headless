@@ -10,7 +10,7 @@ use crate::{DEFAULT_AWS_TILE, Node};
 
 /// Build a resource-icon style string with the given fill colour and
 /// `resIcon` identifier.
-fn res_icon_style(fill: &str, res_icon: &str) -> String {
+pub(crate) fn res_icon_style(fill: &str, res_icon: &str) -> String {
     format!(
         "sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],\
          [0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],\
@@ -22,7 +22,7 @@ fn res_icon_style(fill: &str, res_icon: &str) -> String {
     )
 }
 
-fn aws_node(id: &str, label: &str, fill: &str, res_icon: &str) -> Node {
+pub(crate) fn aws_node(id: &str, label: &str, fill: &str, res_icon: &str) -> Node {
     Node {
         id: id.to_string(),
         label: label.to_string(),

@@ -148,7 +148,7 @@
     consumes, so authored documents are interoperable in both directions.
   </p>
   <p>
-    The three worked examples below are each produced by a single Rust file under
+    The four worked examples below are each produced by a single Rust file under
     <a href="https://github.com/mvhenten/drawio-headless/tree/main/crates/examples/examples"><code>crates/examples/examples/</code></a>.
     Running the example writes the <code>.drawio</code> source and the rendered <code>.svg</code> into this
     <code>docs/examples/</code> directory; the page just embeds those files inline.
@@ -283,6 +283,84 @@ fn main() -&gt; std::io::Result&lt;()&gt; {
     d.connect(&amp;resize, &amp;topic);
 
     drawio_headless_examples::write_artifacts("event-driven", &amp;d)
+}
+</code></pre>
+  </details>
+</section>
+
+<section class="example" id="hybrid-identity">
+  <h2>4. Hybrid identity &amp; on-prem integration</h2>
+  <p class="lead">
+    A user reaches an on-premises app server through Entra ID, with an MFA
+    challenge on the mobile path, after which the server talks to its own
+    database, storage account and job queue, plus a partner API reached
+    straight off the identity hop. This is the showcase for the broader
+    curated catalogue added in issue
+    <a href="https://github.com/mvhenten/drawio-headless/issues/29">#29</a>:
+    vendor-neutral client/actor shapes, vendor-neutral infrastructure shapes,
+    and new Azure hybrid-identity entries &mdash; twelve new kinds in one
+    diagram.
+  </p>
+  <div class="diagram">
+    <img src="examples/hybrid-identity.svg" alt="Hybrid identity and on-prem integration: an end user reaches a browser and mobile app, both routed through the internet and an MFA challenge into Entra ID, which connects to an on-prem server and a partner API; the server talks to a database, storage account and job queue, and the queue produces a report.">
+  </div>
+  <div class="actions">
+    <a class="open-in-drawio" data-drawio-src="examples/hybrid-identity.drawio" data-title="Hybrid identity &amp; on-prem integration" href="examples/hybrid-identity.drawio">Open in draw.io &#8599;</a>
+    <a href="examples/hybrid-identity.drawio">Download .drawio</a>
+    <a href="examples/hybrid-identity.svg">Download SVG</a>
+    <a href="https://github.com/mvhenten/drawio-headless/blob/main/crates/examples/examples/hybrid_identity.rs">Source: hybrid_identity.rs</a>
+  </div>
+  <details>
+    <summary>Show hybrid_identity.rs</summary>
+<pre><code>//! Hybrid identity &amp; on-prem integration: a user reaches an on-premises app
+//! server through Entra ID (with an MFA challenge on the mobile path),
+//! after which the server talks to its own database, storage account and
+//! job queue, plus a partner API reached straight off the identity hop.
+//!
+//! This is the showcase for the broader curated catalogue added in issue
+//! #29: vendor-neutral client/actor shapes (`client::*`), vendor-neutral
+//! infrastructure shapes (`generic::*`), and the new Azure hybrid-identity
+//! entries (`azure::entra_id`, `azure::multi_factor_authentication`,
+//! `azure::server`, `azure::storage`) — twelve new kinds in one diagram.
+
+use drawio_author::{Diagram, azure, client, generic};
+
+fn main() -&gt; std::io::Result&lt;()&gt; {
+    let mut d = Diagram::new("Hybrid identity &amp; on-prem integration");
+
+    let person = d.add_node(client::person("person", "End user").at(180.0, 40.0));
+    let browser = d.add_node(client::browser("browser", "Browser").at(300.0, 40.0));
+    let mobile = d.add_node(client::mobile("mobile", "Mobile app").at(560.0, 40.0));
+
+    let cloud = d.add_node(generic::cloud("cloud", "Internet").at(289.0, 220.0));
+    let mfa = d.add_node(azure::multi_factor_authentication("mfa", "MFA").at(574.0, 220.0));
+
+    let entra_id = d.add_node(azure::entra_id("entra-id", "Entra ID").at(444.0, 420.0));
+    let partner = d.add_node(client::external_system("partner", "Partner API").at(820.0, 420.0));
+
+    let server = d.add_node(azure::server("server", "On-prem server").at(444.0, 600.0));
+
+    let database = d.add_node(generic::database("db", "Database").at(140.0, 780.0));
+    let storage = d.add_node(azure::storage("storage", "Storage account").at(444.0, 780.0));
+    let queue = d.add_node(generic::queue("queue", "Job queue").at(760.0, 780.0));
+
+    let document = d.add_node(generic::document("doc", "Report").at(760.0, 960.0));
+
+    d.connect(&amp;person, &amp;browser);
+    d.connect(&amp;person, &amp;mobile);
+    d.connect(&amp;browser, &amp;cloud);
+    d.connect(&amp;mobile, &amp;cloud);
+    d.connect(&amp;mobile, &amp;mfa);
+    d.connect(&amp;cloud, &amp;entra_id);
+    d.connect(&amp;mfa, &amp;entra_id);
+    d.connect(&amp;entra_id, &amp;server);
+    d.connect(&amp;entra_id, &amp;partner);
+    d.connect(&amp;server, &amp;database);
+    d.connect(&amp;server, &amp;storage);
+    d.connect(&amp;server, &amp;queue);
+    d.connect(&amp;queue, &amp;document);
+
+    drawio_headless_examples::write_artifacts("hybrid-identity", &amp;d)
 }
 </code></pre>
   </details>

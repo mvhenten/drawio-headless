@@ -2,9 +2,15 @@
 //!
 //! The CLI consumes [`ENTRIES`] to power `list-shapes` without reflecting on
 //! the factory functions themselves. Each [`Entry`] carries the library
-//! prefix (`aws`, `azure`, `gcp`, `k8s`), the factory key (matching the
-//! function name in the relevant module), and a free-form `category` label
-//! used to group output for humans.
+//! prefix (`aws`, `azure`, `gcp`, `k8s`, `client`, `generic`), the factory
+//! key (matching the function name in the relevant module), and a
+//! free-form `category` label used to group output for humans.
+//!
+//! `client` and `generic` are vendor-neutral: browsers/mobile apps/people/
+//! external systems, and cloud/database/queue/document shapes respectively
+//! (issue #29). Their glyphs are still sourced from vendor stencil files
+//! (mostly AWS4's unbranded "General Icons"), but the catalogue groups them
+//! by what they represent, not by where the vector art came from.
 //!
 //! The list is hand-maintained; tests in the CLI assert key well-known
 //! members exist so accidental deletions don't pass silently.
@@ -12,7 +18,8 @@
 /// One row in the curated factory catalogue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Entry {
-    /// Library namespace: `"aws"`, `"azure"`, `"gcp"`, or `"k8s"`.
+    /// Library namespace: `"aws"`, `"azure"`, `"gcp"`, `"k8s"`, `"client"`,
+    /// or `"generic"`.
     pub library: &'static str,
     /// Factory key as it appears in `<library>.<key>` form (e.g. `lambda`).
     pub key: &'static str,
@@ -197,6 +204,16 @@ pub const ENTRIES: &[Entry] = &[
     },
     Entry {
         library: "azure",
+        key: "entra_id",
+        category: "Identity",
+    },
+    Entry {
+        library: "azure",
+        key: "multi_factor_authentication",
+        category: "Identity",
+    },
+    Entry {
+        library: "azure",
         key: "cache",
         category: "Database",
     },
@@ -222,12 +239,22 @@ pub const ENTRIES: &[Entry] = &[
     },
     Entry {
         library: "azure",
+        key: "server",
+        category: "Compute",
+    },
+    Entry {
+        library: "azure",
         key: "storage_blob",
         category: "Storage",
     },
     Entry {
         library: "azure",
         key: "storage_queue",
+        category: "Storage",
+    },
+    Entry {
+        library: "azure",
+        key: "storage",
         category: "Storage",
     },
     Entry {
@@ -264,6 +291,48 @@ pub const ENTRIES: &[Entry] = &[
         library: "azure",
         key: "service_bus",
         category: "Integration",
+    },
+    // -- Clients / actors (vendor-neutral) --
+    Entry {
+        library: "client",
+        key: "browser",
+        category: "Actors",
+    },
+    Entry {
+        library: "client",
+        key: "mobile",
+        category: "Actors",
+    },
+    Entry {
+        library: "client",
+        key: "person",
+        category: "Actors",
+    },
+    Entry {
+        library: "client",
+        key: "external_system",
+        category: "Actors",
+    },
+    // -- Generic infrastructure (vendor-neutral) --
+    Entry {
+        library: "generic",
+        key: "cloud",
+        category: "Infrastructure",
+    },
+    Entry {
+        library: "generic",
+        key: "database",
+        category: "Infrastructure",
+    },
+    Entry {
+        library: "generic",
+        key: "queue",
+        category: "Infrastructure",
+    },
+    Entry {
+        library: "generic",
+        key: "document",
+        category: "Infrastructure",
     },
     // -- GCP --
     Entry {
@@ -419,8 +488,13 @@ mod tests {
             "aws.lambda",
             "aws.api_gateway",
             "azure.sql_database",
+            "azure.entra_id",
             "gcp.cloud_functions",
             "k8s.pod",
+            "client.browser",
+            "client.person",
+            "generic.cloud",
+            "generic.database",
         ] {
             assert!(
                 qualified.iter().any(|k| k == needle),
