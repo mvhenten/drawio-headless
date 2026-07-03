@@ -41,7 +41,7 @@ use std::fmt::Write as _;
 use std::sync::OnceLock;
 
 use crate::model::{Edge, Model, Vertex};
-use crate::stencil::{Stencil, StencilLibrary, render_stencil_to_svg};
+use crate::stencil::{CellBounds, Stencil, StencilLibrary, render_stencil_to_svg};
 use crate::style::{EdgeEndpoints, StyleMap, parse_points};
 
 /// Bundled AWS stencil source (about 6 MB). Lives at compile time so the
@@ -273,6 +273,13 @@ fn render_vertex(out: &mut String, v: &Vertex) {
     let shape = style.get("shape").unwrap_or_default();
     let fill = style.get_or("fillColor", "#cccccc");
     let font_color = style.get_or("fontColor", "#232F3E");
+    let aspect_fixed = style.get("aspect") == Some("fixed");
+    let cell = CellBounds {
+        x: v.x,
+        y: v.y,
+        w: v.w,
+        h: v.h,
+    };
 
     if shape == "mxgraph.aws4.resourceIcon" {
         // AWS resource-icon: coloured tile + white glyph from stencil.
@@ -284,7 +291,11 @@ fn render_vertex(out: &mut String, v: &Vertex) {
         );
         if let Some((stencil, _)) = resolve_stencil(&style) {
             out.push_str(&render_stencil_to_svg(
-                stencil, v.x, v.y, v.w, v.h, 0.18, "#ffffff",
+                stencil,
+                cell,
+                0.18,
+                "#ffffff",
+                aspect_fixed,
             ));
         }
     } else if let Some((stencil, kind)) = resolve_stencil(&style) {
@@ -301,7 +312,11 @@ fn render_vertex(out: &mut String, v: &Vertex) {
                     v.x, v.y, v.w, v.h
                 );
                 out.push_str(&render_stencil_to_svg(
-                    stencil, v.x, v.y, v.w, v.h, 0.18, "#ffffff",
+                    stencil,
+                    cell,
+                    0.18,
+                    "#ffffff",
+                    aspect_fixed,
                 ));
             }
             LibraryKind::Azure | LibraryKind::Gcp => {
@@ -316,7 +331,11 @@ fn render_vertex(out: &mut String, v: &Vertex) {
                 };
                 let glyph = style.get_or("fillColor", default);
                 out.push_str(&render_stencil_to_svg(
-                    stencil, v.x, v.y, v.w, v.h, 0.04, glyph,
+                    stencil,
+                    cell,
+                    0.04,
+                    glyph,
+                    aspect_fixed,
                 ));
             }
             LibraryKind::Aws4 => unreachable!("aws4 handled above"),

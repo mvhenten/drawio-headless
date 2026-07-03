@@ -383,26 +383,42 @@ impl Transform {
         cell_w: f64,
         cell_h: f64,
         pad: f64,
+        aspect_fixed: bool,
     ) -> Self {
         let pad_x = cell_w * pad;
         let pad_y = cell_h * pad;
         let draw_w = cell_w - 2.0 * pad_x;
         let draw_h = cell_h - 2.0 * pad_y;
+        let sx = if stencil.w > 0.0 {
+            draw_w / stencil.w
+        } else {
+            1.0
+        };
+        let sy = if stencil.h > 0.0 {
+            draw_h / stencil.h
+        } else {
+            1.0
+        };
+        if !aspect_fixed {
+            return Self {
+                cell_x,
+                cell_y,
+                pad_x,
+                pad_y,
+                sx,
+                sy,
+            };
+        }
+        let s = sx.min(sy);
+        let extra_x = (draw_w - stencil.w * s) / 2.0;
+        let extra_y = (draw_h - stencil.h * s) / 2.0;
         Self {
             cell_x,
             cell_y,
-            pad_x,
-            pad_y,
-            sx: if stencil.w > 0.0 {
-                draw_w / stencil.w
-            } else {
-                1.0
-            },
-            sy: if stencil.h > 0.0 {
-                draw_h / stencil.h
-            } else {
-                1.0
-            },
+            pad_x: pad_x + extra_x,
+            pad_y: pad_y + extra_y,
+            sx: s,
+            sy: s,
         }
     }
     fn tx(self, x: f64) -> f64 {
@@ -413,20 +429,35 @@ impl Transform {
     }
 }
 
+/// Destination tile bounds a stencil is rendered into.
+#[derive(Clone, Copy)]
+pub struct CellBounds {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+}
+
 /// Render a stencil into an SVG `<g>` element, mapping its native
 /// (`stencil.w`, `stencil.h`) coordinate system onto the destination tile.
 ///
 /// `pad_ratio` controls inset (e.g. 0.12 = 12% padding inside the tile).
 pub fn render_stencil_to_svg(
     stencil: &Stencil,
-    cell_x: f64,
-    cell_y: f64,
-    cell_w: f64,
-    cell_h: f64,
+    cell: CellBounds,
     pad_ratio: f64,
     glyph_color: &str,
+    aspect_fixed: bool,
 ) -> String {
-    let tr = Transform::new(stencil, cell_x, cell_y, cell_w, cell_h, pad_ratio);
+    let tr = Transform::new(
+        stencil,
+        cell.x,
+        cell.y,
+        cell.w,
+        cell.h,
+        pad_ratio,
+        aspect_fixed,
+    );
     let mut out = String::new();
     out.push_str("<g>");
     let mut path = String::new();
@@ -598,8 +629,79 @@ mod tests {
                 Cmd::Paint,
             ],
         };
-        let svg = render_stencil_to_svg(&s, 100.0, 100.0, 78.0, 78.0, 0.0, "#fff");
+        let cell = CellBounds {
+            x: 100.0,
+            y: 100.0,
+            w: 78.0,
+            h: 78.0,
+        };
+        let svg = render_stencil_to_svg(&s, cell, 0.0, "#fff", false);
         assert!(svg.contains("<path"));
         assert!(svg.contains("fill=\"#fff\""));
+    }
+
+    #[test]
+    fn aspect_fixed_scales_uniformly_and_centers() {
+        let s = Stencil {
+            name: "t".into(),
+            w: 76.0,
+            h: 76.0,
+            commands: vec![
+                Cmd::PathBegin,
+                Cmd::Move(0.0, 0.0),
+                Cmd::Line(76.0, 0.0),
+                Cmd::Line(76.0, 76.0),
+                Cmd::Line(0.0, 76.0),
+                Cmd::Close,
+                Cmd::Paint,
+            ],
+        };
+        let cell = CellBounds {
+            x: 0.0,
+            y: 0.0,
+            w: 240.0,
+            h: 70.0,
+        };
+        let svg = render_stencil_to_svg(&s, cell, 0.0, "#fff", true);
+        let coords = extract_path_coords(&svg);
+        let (min_x, max_x, min_y, max_y) = bbox(&coords);
+        let width = max_x - min_x;
+        let height = max_y - min_y;
+        assert!(
+            (width - height).abs() < 1e-6,
+            "expected square bbox, got {width}x{height}"
+        );
+        let left_gap = min_x - 0.0;
+        let right_gap = 240.0 - max_x;
+        assert!(
+            (left_gap - right_gap).abs() < 1e-6,
+            "expected icon centered horizontally, left={left_gap} right={right_gap}"
+        );
+    }
+
+    fn extract_path_coords(svg: &str) -> Vec<(f64, f64)> {
+        let start = svg.find("d=\"").expect("path d attribute") + 3;
+        let end = svg[start..].find('"').expect("closing quote") + start;
+        let d = &svg[start..end];
+        d.split_whitespace()
+            .filter_map(|tok| tok.parse::<f64>().ok())
+            .collect::<Vec<_>>()
+            .chunks(2)
+            .map(|pair| (pair[0], pair[1]))
+            .collect()
+    }
+
+    fn bbox(coords: &[(f64, f64)]) -> (f64, f64, f64, f64) {
+        let mut min_x = f64::INFINITY;
+        let mut max_x = f64::NEG_INFINITY;
+        let mut min_y = f64::INFINITY;
+        let mut max_y = f64::NEG_INFINITY;
+        for &(x, y) in coords {
+            min_x = min_x.min(x);
+            max_x = max_x.max(x);
+            min_y = min_y.min(y);
+            max_y = max_y.max(y);
+        }
+        (min_x, max_x, min_y, max_y)
     }
 }
