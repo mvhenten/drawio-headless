@@ -1,22 +1,33 @@
 //! Parse drawio's mxStencil mini-DSL and emit equivalent SVG.
 //!
 //! The DSL lives in `<foreground>` elements of `<shape>` entries inside files
-//! like `stencils/aws4.xml`. v0 supports the subset actually used by the AWS
-//! catalog tiles we ship:
+//! like `stencils/aws4.xml`. Supported commands:
 //!
 //! - `<path>`, `<move>`, `<line>`, `<curve>`, `<quad>`, `<arc>`, `<close/>`
-//! - `<fill/>`, `<stroke/>`, `<fillstroke/>` (painters; we treat all as paint)
+//! - `<fill/>`, `<stroke/>`, `<fillstroke/>` — paint the accumulated path
+//!   using the current graphics state (see below).
 //! - `<ellipse>`, `<rect>`, `<roundrect>` (primitives that produce their own
-//!   SVG nodes)
+//!   SVG nodes, painted immediately with the current fill colour)
+//! - `<save/>` / `<restore/>` — push/pop the graphics state (fill colour,
+//!   stroke colour, stroke width, dashed flag), mirroring
+//!   `mxAbstractCanvas2D.save`/`.restore`.
+//! - `<strokecolor>`, `<fillcolor>`, `<fontcolor>`, `<strokewidth>`,
+//!   `<dashed>` — style overrides that mutate the graphics state; a
+//!   subsequent paint command picks up the new values.
+//! - `<text>` — literal (non-placeholder) text, painted with the current
+//!   font colour.
 //!
 //! `<arc>` maps directly onto an SVG elliptical arc (`A rx ry x-axis-rotation
 //! large-arc-flag sweep-flag x y`) — drawio's mxStencil DSL and SVG share the
 //! same arc parameterisation, so no curve-fitting is needed.
 //!
-//! Other commands (e.g. `<save>`/`<restore>`, `<alpha>`, `<strokecolor>`,
-//! `<fillcolor>`) are silently skipped — see issue #7. Some libraries
-//! (notably Azure and GCP) rely on these and will render with partial
-//! fidelity.
+//! `<image>` cannot be supported (no raster embedding in this crate) and is
+//! rejected with [`RenderError::UnsupportedStencilCmd`] as soon as it is
+//! parsed, rather than silently skipped — see issue #7.
+//!
+//! Commands outside the candidate list tracked by issue #7 (`<alpha>`,
+//! `<dashpattern>`, `<linecap>`, `<linejoin>`, `<miterlimit>`, `<fontstyle>`,
+//! `<fontfamily>`, `<fontsize>`, `<include-shape>`) remain silently skipped.
 //!
 //! Multiple libraries
 //! ------------------
@@ -82,8 +93,47 @@ pub enum Cmd {
         y: f64,
     },
     Close,
-    /// End-of-path paint. The renderer applies the current fill colour.
-    Paint,
+    /// Push a copy of the current graphics state (fill/stroke colour,
+    /// stroke width, dashed flag) onto a stack — `<save/>`.
+    Save,
+    /// Pop the graphics state stack, restoring the previous values —
+    /// `<restore/>`. A no-op if the stack is empty (mirrors
+    /// `mxAbstractCanvas2D.restore`, which only pops when non-empty).
+    Restore,
+    /// Fill the accumulated path with the current fill colour — `<fill/>`.
+    Fill,
+    /// Stroke the accumulated path with the current stroke colour/width —
+    /// `<stroke/>`.
+    Stroke,
+    /// Fill *and* stroke the accumulated path — `<fillstroke/>`.
+    FillStroke,
+    /// `<strokecolor color="..."/>` — updates the graphics state.
+    SetStrokeColor(String),
+    /// `<fillcolor color="..."/>` — updates the graphics state.
+    SetFillColor(String),
+    /// `<fontcolor color="..."/>` — updates the graphics state (used by
+    /// `<text>`).
+    SetFontColor(String),
+    /// `<strokewidth width="..." fixed="0|1"/>`. `fixed="1"` uses `width`
+    /// verbatim; otherwise it is scaled by the transform's minimum axis
+    /// scale, matching `mxStencil`'s `minScale` multiplier.
+    SetStrokeWidth {
+        width: f64,
+        fixed: bool,
+    },
+    /// `<dashed dashed="0|1"/>` — updates the graphics state.
+    SetDashed(bool),
+    /// `<text x="" y="" str="" align="" valign=""/>` — literal text, painted
+    /// with the current font colour. Placeholder substitution
+    /// (`evaluateTextAttribute` in upstream mxStencil) is not implemented;
+    /// `str` is used verbatim.
+    Text {
+        x: f64,
+        y: f64,
+        text: String,
+        align: String,
+        valign: String,
+    },
     Ellipse {
         x: f64,
         y: f64,
@@ -267,8 +317,18 @@ fn handle_open(
                 s.commands.push(Cmd::PathBegin);
             }
         }
+        b"image" => {
+            // No raster embedding in this crate — surface the dedicated
+            // error rather than silently dropping the glyph detail (issue
+            // #7). Only counts inside <foreground>; <background> content is
+            // not parsed at all today, so it would never reach here anyway.
+            if *in_foreground {
+                return Err(RenderError::UnsupportedStencilCmd("image".to_string()));
+            }
+        }
         b"move" | b"line" | b"curve" | b"quad" | b"arc" | b"close" | b"fill" | b"stroke"
-        | b"fillstroke" | b"ellipse" | b"rect" | b"roundrect" => {
+        | b"fillstroke" | b"ellipse" | b"rect" | b"roundrect" | b"save" | b"restore"
+        | b"strokecolor" | b"fillcolor" | b"fontcolor" | b"strokewidth" | b"dashed" | b"text" => {
             if !*in_foreground {
                 return Ok(());
             }
@@ -336,7 +396,32 @@ fn build_cmd(local: &[u8], attrs: &HashMap<String, String>) -> Cmd {
             y: num(attrs, "y"),
         },
         b"close" => Cmd::Close,
-        b"fill" | b"stroke" | b"fillstroke" => Cmd::Paint,
+        b"save" => Cmd::Save,
+        b"restore" => Cmd::Restore,
+        b"fill" => Cmd::Fill,
+        b"stroke" => Cmd::Stroke,
+        b"fillstroke" => Cmd::FillStroke,
+        b"strokecolor" => Cmd::SetStrokeColor(color(attrs, "color")),
+        b"fillcolor" => Cmd::SetFillColor(color(attrs, "color")),
+        b"fontcolor" => Cmd::SetFontColor(color(attrs, "color")),
+        b"strokewidth" => Cmd::SetStrokeWidth {
+            width: num(attrs, "width"),
+            fixed: flag(attrs, "fixed"),
+        },
+        b"dashed" => Cmd::SetDashed(flag(attrs, "dashed")),
+        b"text" => Cmd::Text {
+            x: num(attrs, "x"),
+            y: num(attrs, "y"),
+            text: attrs.get("str").cloned().unwrap_or_default(),
+            align: attrs
+                .get("align")
+                .cloned()
+                .unwrap_or_else(|| "left".to_string()),
+            valign: attrs
+                .get("valign")
+                .cloned()
+                .unwrap_or_else(|| "top".to_string()),
+        },
         b"ellipse" => Cmd::Ellipse {
             x: num(attrs, "x"),
             y: num(attrs, "y"),
@@ -386,6 +471,15 @@ fn num(map: &HashMap<String, String>, key: &str) -> f64 {
 /// matching the DSL's convention.
 fn flag(map: &HashMap<String, String>, key: &str) -> bool {
     map.get(key).map(String::as_str) == Some("1")
+}
+
+/// Read a colour attribute (`<strokecolor color="..."/>` and friends).
+/// `"none"` is a valid SVG paint keyword (transparent), so colour values are
+/// passed through verbatim rather than translated. A missing attribute
+/// defaults to `"none"` — a no-op paint, the safest fallback for malformed
+/// input.
+fn color(map: &HashMap<String, String>, key: &str) -> String {
+    map.get(key).cloned().unwrap_or_else(|| "none".to_string())
 }
 
 fn normalise_stencil_key(name: &str) -> String {
@@ -467,10 +561,28 @@ pub struct CellBounds {
     pub h: f64,
 }
 
+/// Graphics state mutated by `<save>`/`<restore>` and the style-override
+/// commands (`<strokecolor>`, `<fillcolor>`, `<fontcolor>`, `<strokewidth>`,
+/// `<dashed>`), mirroring the handful of fields `mxAbstractCanvas2D`'s state
+/// stack tracks. `stroke_width` is stored already scaled (see
+/// [`Cmd::SetStrokeWidth`]), matching upstream's `setStrokeWidth`, which
+/// receives an already-multiplied value.
+#[derive(Clone)]
+struct PaintState {
+    fill_color: String,
+    stroke_color: String,
+    stroke_width: f64,
+    dashed: bool,
+    font_color: String,
+}
+
 /// Render a stencil into an SVG `<g>` element, mapping its native
 /// (`stencil.w`, `stencil.h`) coordinate system onto the destination tile.
 ///
 /// `pad_ratio` controls inset (e.g. 0.12 = 12% padding inside the tile).
+/// `glyph_color` seeds the initial fill/stroke/font colour; `<fillcolor>`,
+/// `<strokecolor>`, and `<fontcolor>` commands inside the stencil override it
+/// from there (optionally scoped with `<save>`/`<restore>`).
 pub fn render_stencil_to_svg(
     stencil: &Stencil,
     cell: CellBounds,
@@ -490,8 +602,16 @@ pub fn render_stencil_to_svg(
     let mut out = String::new();
     out.push_str("<g>");
     let mut path = String::new();
+    let mut state = PaintState {
+        fill_color: glyph_color.to_string(),
+        stroke_color: glyph_color.to_string(),
+        stroke_width: 1.0,
+        dashed: false,
+        font_color: glyph_color.to_string(),
+    };
+    let mut stack: Vec<PaintState> = Vec::new();
     for cmd in &stencil.commands {
-        emit_cmd(cmd, tr, glyph_color, &mut out, &mut path);
+        emit_cmd(cmd, tr, &mut state, &mut stack, &mut out, &mut path);
     }
     out.push_str("</g>");
     out
@@ -525,7 +645,15 @@ fn write_arc(
     );
 }
 
-fn emit_cmd(cmd: &Cmd, tr: Transform, glyph_color: &str, out: &mut String, path: &mut String) {
+#[allow(clippy::too_many_arguments)]
+fn emit_cmd(
+    cmd: &Cmd,
+    tr: Transform,
+    state: &mut PaintState,
+    stack: &mut Vec<PaintState>,
+    out: &mut String,
+    path: &mut String,
+) {
     match cmd {
         Cmd::PathBegin => path.clear(),
         Cmd::Move(x, y) => {
@@ -583,43 +711,141 @@ fn emit_cmd(cmd: &Cmd, tr: Transform, glyph_color: &str, out: &mut String, path:
             *y,
         ),
         Cmd::Close => path.push_str("Z "),
-        Cmd::Paint => {
-            if !path.is_empty() {
-                let _ = write!(
-                    out,
-                    "<path d=\"{}\" fill=\"{}\" fill-rule=\"evenodd\" stroke=\"none\"/>",
-                    path.trim(),
-                    glyph_color
-                );
-                path.clear();
+        Cmd::Save => stack.push(state.clone()),
+        Cmd::Restore => {
+            if let Some(prev) = stack.pop() {
+                *state = prev;
             }
         }
-        Cmd::Ellipse { x, y, w, h } => emit_ellipse(tr, glyph_color, out, *x, *y, *w, *h),
-        Cmd::Rect { x, y, w, h } => emit_rect(tr, glyph_color, out, *x, *y, *w, *h, 0.0),
+        Cmd::SetFillColor(c) => state.fill_color.clone_from(c),
+        Cmd::SetStrokeColor(c) => state.stroke_color.clone_from(c),
+        Cmd::SetFontColor(c) => state.font_color.clone_from(c),
+        Cmd::SetStrokeWidth { width, fixed } => {
+            let scale = if *fixed { 1.0 } else { tr.sx.min(tr.sy) };
+            state.stroke_width = width * scale;
+        }
+        Cmd::SetDashed(v) => state.dashed = *v,
+        Cmd::Fill => emit_paint(path, out, state, PaintMode::Fill),
+        Cmd::Stroke => emit_paint(path, out, state, PaintMode::Stroke),
+        Cmd::FillStroke => emit_paint(path, out, state, PaintMode::FillStroke),
+        Cmd::Text {
+            x,
+            y,
+            text,
+            align,
+            valign,
+        } => emit_text(tr, state, out, *x, *y, text, align, valign),
+        Cmd::Ellipse { x, y, w, h } => emit_ellipse(tr, &state.fill_color, out, *x, *y, *w, *h),
+        Cmd::Rect { x, y, w, h } => emit_rect(tr, &state.fill_color, out, *x, *y, *w, *h, 0.0),
         Cmd::RoundRect { x, y, w, h, arc } => {
-            emit_rect(tr, glyph_color, out, *x, *y, *w, *h, *arc);
+            emit_rect(tr, &state.fill_color, out, *x, *y, *w, *h, *arc);
         }
     }
 }
 
-/// Emit an `<ellipse>` primitive (the `<ellipse>` stencil command).
-#[allow(clippy::many_single_char_names)]
-fn emit_ellipse(
+/// Which paint(s) [`emit_paint`] applies to the accumulated path — one per
+/// `<fill/>`/`<stroke/>`/`<fillstroke/>` command.
+#[derive(Clone, Copy)]
+enum PaintMode {
+    Fill,
+    Stroke,
+    FillStroke,
+}
+
+/// Paint the accumulated `path` and clear it, using the colours/width/dash
+/// currently in `state`. A no-op on an empty path (mirrors the original
+/// `<fill/>`-only behaviour when a shape never opened a `<path>`, e.g. after
+/// a no-attribute `<rect/>` placeholder some GCP stencils emit).
+fn emit_paint(path: &mut String, out: &mut String, state: &PaintState, mode: PaintMode) {
+    if path.trim().is_empty() {
+        return;
+    }
+    let d = path.trim();
+    let dash = dash_attr(state);
+    match mode {
+        PaintMode::Fill => {
+            let _ = write!(
+                out,
+                "<path d=\"{d}\" fill=\"{}\" fill-rule=\"evenodd\" stroke=\"none\"/>",
+                state.fill_color
+            );
+        }
+        PaintMode::Stroke => {
+            let _ = write!(
+                out,
+                "<path d=\"{d}\" fill=\"none\" stroke=\"{}\" stroke-width=\"{}\"{dash}/>",
+                state.stroke_color, state.stroke_width
+            );
+        }
+        PaintMode::FillStroke => {
+            let _ = write!(
+                out,
+                "<path d=\"{d}\" fill=\"{}\" fill-rule=\"evenodd\" stroke=\"{}\" \
+                 stroke-width=\"{}\"{dash}/>",
+                state.fill_color, state.stroke_color, state.stroke_width
+            );
+        }
+    }
+    path.clear();
+}
+
+/// SVG `stroke-dasharray` attribute (empty string when not dashed), scaled
+/// off the current stroke width — mirrors upstream's default `"3 3"` dash
+/// pattern multiplied by `strokeWidth * scale`.
+fn dash_attr(state: &PaintState) -> String {
+    if !state.dashed {
+        return String::new();
+    }
+    let unit = 3.0 * state.stroke_width.max(0.1);
+    format!(" stroke-dasharray=\"{unit} {unit}\"")
+}
+
+/// Emit a `<text>` primitive (the `<text>` stencil command). Literal text
+/// only — no placeholder substitution (`%name%`-style attributes upstream
+/// supports via `evaluateTextAttribute`).
+#[allow(clippy::too_many_arguments)]
+fn emit_text(
     tr: Transform,
-    glyph_color: &str,
+    state: &PaintState,
     out: &mut String,
     x: f64,
     y: f64,
-    w: f64,
-    h: f64,
+    text: &str,
+    align: &str,
+    valign: &str,
 ) {
+    let anchor = match align {
+        "center" => "middle",
+        "right" => "end",
+        _ => "start",
+    };
+    let baseline = match valign {
+        "middle" => "middle",
+        "bottom" => "auto",
+        _ => "hanging",
+    };
+    let font_size = (12.0 * tr.sy.min(tr.sx)).max(1.0);
+    let _ = write!(
+        out,
+        "<text x=\"{}\" y=\"{}\" font-family=\"sans-serif\" font-size=\"{font_size}\" \
+         fill=\"{}\" text-anchor=\"{anchor}\" dominant-baseline=\"{baseline}\">{}</text>",
+        tr.tx(x),
+        tr.ty(y),
+        state.font_color,
+        crate::escape_text(text)
+    );
+}
+
+/// Emit an `<ellipse>` primitive (the `<ellipse>` stencil command).
+#[allow(clippy::many_single_char_names)]
+fn emit_ellipse(tr: Transform, fill_color: &str, out: &mut String, x: f64, y: f64, w: f64, h: f64) {
     let cx = tr.tx(x + w / 2.0);
     let cy = tr.ty(y + h / 2.0);
     let rx = (w * tr.sx) / 2.0;
     let ry = (h * tr.sy) / 2.0;
     let _ = write!(
         out,
-        "<ellipse cx=\"{cx}\" cy=\"{cy}\" rx=\"{rx}\" ry=\"{ry}\" fill=\"{glyph_color}\"/>"
+        "<ellipse cx=\"{cx}\" cy=\"{cy}\" rx=\"{rx}\" ry=\"{ry}\" fill=\"{fill_color}\"/>"
     );
 }
 
@@ -628,7 +854,7 @@ fn emit_ellipse(
 #[allow(clippy::too_many_arguments, clippy::many_single_char_names)]
 fn emit_rect(
     tr: Transform,
-    glyph_color: &str,
+    fill_color: &str,
     out: &mut String,
     x: f64,
     y: f64,
@@ -646,7 +872,7 @@ fn emit_rect(
         h * tr.sy,
         r,
         r,
-        glyph_color
+        fill_color
     );
 }
 
@@ -720,7 +946,7 @@ mod tests {
                 Cmd::Move(0.0, 0.0),
                 Cmd::Line(10.0, 10.0),
                 Cmd::Close,
-                Cmd::Paint,
+                Cmd::Fill,
             ],
         };
         let cell = CellBounds {
@@ -771,7 +997,7 @@ mod tests {
                     y: 0.0,
                 },
                 Cmd::Close,
-                Cmd::Paint,
+                Cmd::Fill,
             ],
         };
         let cell = CellBounds {
@@ -816,7 +1042,7 @@ mod tests {
                 Cmd::Line(76.0, 76.0),
                 Cmd::Line(0.0, 76.0),
                 Cmd::Close,
-                Cmd::Paint,
+                Cmd::Fill,
             ],
         };
         let cell = CellBounds {
@@ -840,6 +1066,388 @@ mod tests {
             (left_gap - right_gap).abs() < 1e-6,
             "expected icon centered horizontally, left={left_gap} right={right_gap}"
         );
+    }
+
+    #[test]
+    fn save_restore_scopes_style_overrides() {
+        // Fixture: a shape that paints once with the default glyph colour,
+        // overrides the fill colour inside a <save>/<restore> scope, then
+        // paints a third time after <restore> — the override must not leak
+        // past the matching <restore/>.
+        let s = Stencil {
+            name: "t".into(),
+            w: 10.0,
+            h: 10.0,
+            commands: vec![
+                Cmd::PathBegin,
+                Cmd::Move(0.0, 0.0),
+                Cmd::Line(1.0, 1.0),
+                Cmd::Close,
+                Cmd::Fill,
+                Cmd::Save,
+                Cmd::SetFillColor("#ff0000".to_string()),
+                Cmd::PathBegin,
+                Cmd::Move(2.0, 2.0),
+                Cmd::Line(3.0, 3.0),
+                Cmd::Close,
+                Cmd::Fill,
+                Cmd::Restore,
+                Cmd::PathBegin,
+                Cmd::Move(4.0, 4.0),
+                Cmd::Line(5.0, 5.0),
+                Cmd::Close,
+                Cmd::Fill,
+            ],
+        };
+        let cell = CellBounds {
+            x: 0.0,
+            y: 0.0,
+            w: 10.0,
+            h: 10.0,
+        };
+        let svg = render_stencil_to_svg(&s, cell, 0.0, "#00ff00", false);
+        assert_eq!(
+            svg.matches("fill=\"#ff0000\"").count(),
+            1,
+            "override should paint exactly once inside the save/restore scope; got: {svg}"
+        );
+        assert_eq!(
+            svg.matches("fill=\"#00ff00\"").count(),
+            2,
+            "glyph colour should paint before the save and after the restore; got: {svg}"
+        );
+    }
+
+    #[test]
+    fn restore_without_matching_save_is_a_no_op() {
+        // Mirrors mxAbstractCanvas2D.restore(), which only pops when the
+        // stack is non-empty — a stray <restore/> must not panic or clear
+        // state.
+        let s = Stencil {
+            name: "t".into(),
+            w: 10.0,
+            h: 10.0,
+            commands: vec![
+                Cmd::Restore,
+                Cmd::PathBegin,
+                Cmd::Move(0.0, 0.0),
+                Cmd::Line(1.0, 1.0),
+                Cmd::Close,
+                Cmd::Fill,
+            ],
+        };
+        let cell = CellBounds {
+            x: 0.0,
+            y: 0.0,
+            w: 10.0,
+            h: 10.0,
+        };
+        let svg = render_stencil_to_svg(&s, cell, 0.0, "#123456", false);
+        assert!(svg.contains("fill=\"#123456\""));
+    }
+
+    #[test]
+    fn strokecolor_and_fillcolor_override_fillstroke() {
+        let s = Stencil {
+            name: "t".into(),
+            w: 10.0,
+            h: 10.0,
+            commands: vec![
+                Cmd::SetStrokeColor("#0000ff".to_string()),
+                Cmd::SetFillColor("#ff00ff".to_string()),
+                Cmd::PathBegin,
+                Cmd::Move(0.0, 0.0),
+                Cmd::Line(1.0, 1.0),
+                Cmd::Close,
+                Cmd::FillStroke,
+            ],
+        };
+        let cell = CellBounds {
+            x: 0.0,
+            y: 0.0,
+            w: 10.0,
+            h: 10.0,
+        };
+        let svg = render_stencil_to_svg(&s, cell, 0.0, "#000000", false);
+        assert!(
+            svg.contains("fill=\"#ff00ff\""),
+            "expected overridden fill colour; got: {svg}"
+        );
+        assert!(
+            svg.contains("stroke=\"#0000ff\""),
+            "expected overridden stroke colour; got: {svg}"
+        );
+    }
+
+    #[test]
+    fn strokecolor_none_is_passed_through_as_svg_keyword() {
+        // "none" is a valid SVG paint value (transparent) — drawio's stencils
+        // use it directly (e.g. gcp.xml's BigQuery shape), so it must not be
+        // translated or dropped.
+        let s = Stencil {
+            name: "t".into(),
+            w: 10.0,
+            h: 10.0,
+            commands: vec![
+                Cmd::SetStrokeColor("none".to_string()),
+                Cmd::PathBegin,
+                Cmd::Move(0.0, 0.0),
+                Cmd::Line(1.0, 1.0),
+                Cmd::Close,
+                Cmd::Stroke,
+            ],
+        };
+        let cell = CellBounds {
+            x: 0.0,
+            y: 0.0,
+            w: 10.0,
+            h: 10.0,
+        };
+        let svg = render_stencil_to_svg(&s, cell, 0.0, "#000000", false);
+        assert!(svg.contains("stroke=\"none\""));
+    }
+
+    #[test]
+    fn strokewidth_scales_unless_fixed() {
+        let scaled = Stencil {
+            name: "t".into(),
+            w: 10.0,
+            h: 10.0,
+            commands: vec![
+                Cmd::SetStrokeWidth {
+                    width: 2.0,
+                    fixed: false,
+                },
+                Cmd::PathBegin,
+                Cmd::Move(0.0, 0.0),
+                Cmd::Line(1.0, 1.0),
+                Cmd::Close,
+                Cmd::Stroke,
+            ],
+        };
+        let cell = CellBounds {
+            x: 0.0,
+            y: 0.0,
+            w: 20.0,
+            h: 20.0,
+        };
+        // stencil is 10x10 mapped onto a 20x20 tile with no padding: scale
+        // is 2.0 on both axes, so an unfixed width of 2.0 becomes 4.0.
+        let svg = render_stencil_to_svg(&scaled, cell, 0.0, "#000000", false);
+        assert!(
+            svg.contains("stroke-width=\"4\""),
+            "expected width scaled by the tile's 2x scale; got: {svg}"
+        );
+
+        let fixed = Stencil {
+            name: "t".into(),
+            w: 10.0,
+            h: 10.0,
+            commands: vec![
+                Cmd::SetStrokeWidth {
+                    width: 2.0,
+                    fixed: true,
+                },
+                Cmd::PathBegin,
+                Cmd::Move(0.0, 0.0),
+                Cmd::Line(1.0, 1.0),
+                Cmd::Close,
+                Cmd::Stroke,
+            ],
+        };
+        let svg = render_stencil_to_svg(&fixed, cell, 0.0, "#000000", false);
+        assert!(
+            svg.contains("stroke-width=\"2\""),
+            "fixed width must ignore the tile scale; got: {svg}"
+        );
+    }
+
+    #[test]
+    fn dashed_emits_scaled_stroke_dasharray() {
+        let s = Stencil {
+            name: "t".into(),
+            w: 10.0,
+            h: 10.0,
+            commands: vec![
+                Cmd::SetDashed(true),
+                Cmd::PathBegin,
+                Cmd::Move(0.0, 0.0),
+                Cmd::Line(1.0, 1.0),
+                Cmd::Close,
+                Cmd::Stroke,
+            ],
+        };
+        let cell = CellBounds {
+            x: 0.0,
+            y: 0.0,
+            w: 10.0,
+            h: 10.0,
+        };
+        let svg = render_stencil_to_svg(&s, cell, 0.0, "#000000", false);
+        assert!(
+            svg.contains("stroke-dasharray="),
+            "expected a dash pattern; got: {svg}"
+        );
+
+        let not_dashed = Stencil {
+            commands: vec![
+                Cmd::PathBegin,
+                Cmd::Move(0.0, 0.0),
+                Cmd::Line(1.0, 1.0),
+                Cmd::Stroke,
+            ],
+            ..s
+        };
+        let svg = render_stencil_to_svg(&not_dashed, cell, 0.0, "#000000", false);
+        assert!(!svg.contains("stroke-dasharray="));
+    }
+
+    #[test]
+    fn fontcolor_colors_text_command() {
+        let s = Stencil {
+            name: "t".into(),
+            w: 10.0,
+            h: 10.0,
+            commands: vec![
+                Cmd::SetFontColor("#abcdef".to_string()),
+                Cmd::Text {
+                    x: 1.0,
+                    y: 1.0,
+                    text: "hi".to_string(),
+                    align: "center".to_string(),
+                    valign: "middle".to_string(),
+                },
+            ],
+        };
+        let cell = CellBounds {
+            x: 0.0,
+            y: 0.0,
+            w: 10.0,
+            h: 10.0,
+        };
+        let svg = render_stencil_to_svg(&s, cell, 0.0, "#000000", false);
+        assert!(svg.contains("<text"));
+        assert!(svg.contains("fill=\"#abcdef\""));
+        assert!(svg.contains(">hi</text>"));
+        assert!(svg.contains("text-anchor=\"middle\""));
+    }
+
+    #[test]
+    fn text_escapes_content() {
+        let s = Stencil {
+            name: "t".into(),
+            w: 10.0,
+            h: 10.0,
+            commands: vec![Cmd::Text {
+                x: 0.0,
+                y: 0.0,
+                text: "<a & b>".to_string(),
+                align: "left".to_string(),
+                valign: "top".to_string(),
+            }],
+        };
+        let cell = CellBounds {
+            x: 0.0,
+            y: 0.0,
+            w: 10.0,
+            h: 10.0,
+        };
+        let svg = render_stencil_to_svg(&s, cell, 0.0, "#000000", false);
+        assert!(svg.contains("&lt;a &amp; b&gt;"));
+    }
+
+    #[test]
+    fn image_command_is_rejected_as_unsupported() {
+        // <image> needs raster embedding this crate does not have — it must
+        // surface RenderError::UnsupportedStencilCmd rather than silently
+        // dropping the glyph detail (issue #7).
+        let xml = r#"<shapes name="mxgraph.test">
+<shape name="has-image" w="10" h="10">
+    <foreground>
+        <image x="0" y="0" w="10" h="10" src="data:image/png;base64,AA=="/>
+    </foreground>
+</shape>
+</shapes>"#;
+        let err = StencilLibrary::from_xml(xml, "mxgraph.test").unwrap_err();
+        assert!(matches!(err, RenderError::UnsupportedStencilCmd(cmd) if cmd == "image"));
+    }
+
+    #[test]
+    fn image_outside_foreground_is_ignored() {
+        // <background> content is not parsed at all today (only
+        // <foreground> is walked), so an <image> there must not error either
+        // — it never reaches the handler.
+        let xml = r#"<shapes name="mxgraph.test">
+<shape name="bg-image" w="10" h="10">
+    <background>
+        <image x="0" y="0" w="10" h="10" src="foo.png"/>
+    </background>
+    <foreground>
+        <rect x="0" y="0" w="10" h="10"/>
+        <fill/>
+    </foreground>
+</shape>
+</shapes>"#;
+        let lib = StencilLibrary::from_xml(xml, "mxgraph.test").expect("parses fine");
+        assert!(lib.lookup("bg-image").is_some());
+    }
+
+    #[test]
+    fn renders_real_aws_work_package_stencil_with_style_overrides() {
+        // Real-world fixture: aws4.xml's "work package" shape is the only
+        // stencil in that library exercising strokecolor/strokewidth/dashed
+        // together with a bare <stroke/> and <fillcolor> before
+        // <fillstroke/> (see issue #7).
+        let xml = std::fs::read_to_string("../../stencils/aws4.xml").expect("stencil file");
+        let lib = StencilLibrary::from_xml(&xml, "mxgraph.aws4").unwrap();
+        let s = lib.lookup("work_package").expect("work package present");
+        let cell = CellBounds {
+            x: 0.0,
+            y: 0.0,
+            w: 78.0,
+            h: 78.0,
+        };
+        let svg = render_stencil_to_svg(s, cell, 0.0, "#232F3E", false);
+        assert!(
+            svg.contains("stroke=\"#00ff00\""),
+            "expected the stencil's own strokecolor override; got: {svg}"
+        );
+        assert!(
+            svg.contains("fill=\"#00ff00\""),
+            "expected the stencil's own fillcolor override on the final \
+             fillstroke; got: {svg}"
+        );
+        assert!(svg.contains("stroke-dasharray="), "expected dashed stroke");
+    }
+
+    #[test]
+    fn renders_real_gcp_bigquery_stencil_with_save_restore() {
+        // Real-world fixture: gcp.xml's BigQuery shape wraps a shadow layer
+        // in <save>/<fillcolor>/.../<restore>, then resumes drawing with the
+        // glyph colour restored (see issue #7).
+        let xml = std::fs::read_to_string("../../stencils/gcp.xml").expect("stencil file");
+        let lib = StencilLibrary::from_xml(&xml, "mxgraph.gcp").unwrap();
+        let s = lib.lookup("big_data.bigquery").expect("bigquery present");
+        let cell = CellBounds {
+            x: 0.0,
+            y: 0.0,
+            w: 129.0,
+            h: 113.0,
+        };
+        let svg = render_stencil_to_svg(s, cell, 0.0, "#4285F4", false);
+        // The shadow layer inside save/restore overrides fill to black.
+        assert!(
+            svg.contains("fill=\"#000000\""),
+            "expected the save-scoped fillcolor override; got: {svg}"
+        );
+        // The white highlight detail drawn after restore.
+        assert!(
+            svg.contains("fill=\"#fff\""),
+            "expected the post-restore fillcolor override; got: {svg}"
+        );
+        // The glyph's own default-coloured silhouette (painted before the
+        // first <save/>, using no override).
+        assert!(svg.contains("fill=\"#4285F4\""));
     }
 
     fn extract_path_coords(svg: &str) -> Vec<(f64, f64)> {
