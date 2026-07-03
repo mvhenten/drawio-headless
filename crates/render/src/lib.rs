@@ -9,10 +9,15 @@
 //! 3. For each vertex bound to a known stencil library (AWS / Azure / GCP /
 //!    Kubernetes): resolve the glyph against the matching bundled
 //!    [`stencil::StencilLibrary`] and emit SVG.
-//! 4. For each edge: route between the picked connection points. Edges
-//!    declaring `edgeStyle=orthogonalEdgeStyle` render as a two-segment
-//!    right-angle polyline (one corner); other edges fall back to a
-//!    straight line. Endpoints carry a simple arrowhead.
+//! 4. For each edge: route between the picked connection points. An
+//!    explicit `exitX/exitY`/`entryX/entryY` override always wins; absent
+//!    an override, the endpoint snaps to the nearest side-centre of the
+//!    cell (never a corner), and the unpinned side of the pair is chosen
+//!    so the route's final segment lands perpendicular to the side it
+//!    enters (see [`edge_endpoints`]). Edges declaring
+//!    `edgeStyle=orthogonalEdgeStyle` render as a two-segment right-angle
+//!    polyline (one corner); other edges fall back to a straight line.
+//!    Endpoints carry a simple arrowhead.
 //!
 //! Stencil library coverage
 //! ------------------------
@@ -43,7 +48,7 @@ use std::sync::OnceLock;
 
 use crate::model::{Edge, Model, Vertex};
 use crate::stencil::{CellBounds, Stencil, StencilLibrary, render_stencil_to_svg};
-use crate::style::{EdgeEndpoints, StyleMap, parse_points};
+use crate::style::{EdgeEndpoints, StyleMap};
 
 /// Bundled AWS stencil source (about 6 MB). Lives at compile time so the
 /// library is self-contained.
@@ -371,12 +376,9 @@ fn render_edge(out: &mut String, model: &Model, e: &Edge) {
     let Some(tgt) = model.vertices.iter().find(|v| v.id == e.target) else {
         return;
     };
-    let src_centre = (src.x + src.w / 2.0, src.y + src.h / 2.0);
-    let tgt_centre = (tgt.x + tgt.w / 2.0, tgt.y + tgt.h / 2.0);
     let style = StyleMap::parse(&e.style);
     let overrides = EdgeEndpoints::from_style(&style);
-    let (sx, sy) = resolve_endpoint(src, overrides.exit, tgt_centre);
-    let (tx, ty) = resolve_endpoint(tgt, overrides.entry, src_centre);
+    let (sx, sy, tx, ty) = edge_endpoints(src, tgt, overrides.exit, overrides.entry);
     let end_arrow = style.get_or("endArrow", "open");
     let marker_end = if end_arrow == "none" {
         ""
@@ -436,51 +438,158 @@ fn orthogonal_corner(src: &Vertex, start: (f64, f64), end: (f64, f64)) -> Option
     }
 }
 
-/// Pick the absolute endpoint for `cell`, honouring any per-edge override.
-///
-/// Resolution order:
-/// 1. If `over` is `Some((nx, ny))`, use the explicit normalised override —
-///    this is the edge's `exitX/exitY` or `entryX/entryY` attribute.
-/// 2. Otherwise, pick the nearest declared `points=` constraint on the cell.
-/// 3. Otherwise, fall back to the cell's geometric centre.
-fn resolve_endpoint(cell: &Vertex, over: Option<(f32, f32)>, toward: (f64, f64)) -> (f64, f64) {
-    if let Some((nx, ny)) = over {
-        return (
-            cell.x + f64::from(nx) * cell.w,
-            cell.y + f64::from(ny) * cell.h,
-        );
-    }
-    let cell_centre = (cell.x + cell.w / 2.0, cell.y + cell.h / 2.0);
-    pick_endpoint(cell, toward).unwrap_or(cell_centre)
+/// One of the four cardinal sides of a rectangular cell an edge can attach
+/// to. Defaults always resolve to a side's *centre* — never a corner
+/// (issue #40).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Side {
+    Top,
+    Bottom,
+    Left,
+    Right,
 }
 
-/// Choose the absolute coordinate of `cell`'s declared connection point
-/// nearest to `toward`. Returns `None` when the cell has no `points=` in
-/// its style, leaving the caller to fall back to the midpoint.
-///
-/// Tie-break: if two constraints are equidistant from `toward`, the one
-/// declared first in the style string wins (stable iteration order from
-/// [`style::parse_points`]).
-fn pick_endpoint(cell: &Vertex, toward: (f64, f64)) -> Option<(f64, f64)> {
-    let style = StyleMap::parse(&cell.style);
-    let points = parse_points(style.get("points")?);
-    if points.is_empty() {
-        return None;
+impl Side {
+    /// `true` for the two sides that run horizontally (top/bottom). A
+    /// segment travels perpendicular to the side it lands on head-on, so a
+    /// route entering a horizontal side must arrive travelling vertically,
+    /// and vice versa — see [`edge_endpoints`].
+    fn is_horizontal_side(self) -> bool {
+        matches!(self, Side::Top | Side::Bottom)
     }
-    let mut best: Option<((f64, f64), f64)> = None;
-    for (nx, ny) in points {
-        let ax = cell.x + f64::from(nx) * cell.w;
-        let ay = cell.y + f64::from(ny) * cell.h;
-        let dx = ax - toward.0;
-        let dy = ay - toward.1;
-        let d2 = dx * dx + dy * dy;
-        match best {
-            None => best = Some(((ax, ay), d2)),
-            Some((_, bd)) if d2 < bd => best = Some(((ax, ay), d2)),
-            _ => {}
+
+    /// The other side of the same axis-aligned pair (`Top`/`Bottom` or
+    /// `Left`/`Right`). Used for the colinear case, where the route is a
+    /// single straight segment and both ends must share the same axis.
+    fn opposite(self) -> Side {
+        match self {
+            Side::Top => Side::Bottom,
+            Side::Bottom => Side::Top,
+            Side::Left => Side::Right,
+            Side::Right => Side::Left,
         }
     }
-    best.map(|(pt, _)| pt)
+}
+
+/// Absolute coordinate of `cell`'s side-centre for `side`.
+fn side_centre(cell: &Vertex, side: Side) -> (f64, f64) {
+    match side {
+        Side::Top => (cell.x + cell.w / 2.0, cell.y),
+        Side::Bottom => (cell.x + cell.w / 2.0, cell.y + cell.h),
+        Side::Left => (cell.x, cell.y + cell.h / 2.0),
+        Side::Right => (cell.x + cell.w, cell.y + cell.h / 2.0),
+    }
+}
+
+/// Classify an explicit normalised override `(nx, ny)` (an `exitX/exitY` or
+/// `entryX/entryY` pair, each `0..1`) by which side of the cell it sits on.
+/// Used only to infer the *orientation* of a pinned anchor, so the other
+/// (unpinned) end of the edge can still be defaulted sensibly — the pinned
+/// point itself is always used verbatim.
+///
+/// An exact corner override (both members at `0`/`1`) is a tie; it reads as
+/// the horizontal side (`Top`/`Bottom`), a deliberate, arbitrary but
+/// deterministic choice — the caller pinned a corner on purpose, so there
+/// is no "correct" orientation to recover.
+fn side_of_override(nx: f32, ny: f32) -> Side {
+    if ny <= 0.0 {
+        Side::Top
+    } else if ny >= 1.0 {
+        Side::Bottom
+    } else if nx <= 0.0 {
+        Side::Left
+    } else {
+        Side::Right
+    }
+}
+
+/// The side of a cell, restricted to the given orientation, that faces the
+/// direction `(dx, dy)` points *away* from the cell — i.e. the side nearest
+/// whatever lies in that direction. `horizontal` selects between
+/// `Top`/`Bottom` (`true`) and `Left`/`Right` (`false`).
+fn facing_side(horizontal: bool, dx: f64, dy: f64) -> Side {
+    if horizontal {
+        if dy >= 0.0 { Side::Bottom } else { Side::Top }
+    } else if dx >= 0.0 {
+        Side::Right
+    } else {
+        Side::Left
+    }
+}
+
+/// Resolve both ends of an edge between `src` and `tgt`.
+///
+/// An explicit override (`exitX/exitY` or `entryX/entryY`) is always
+/// honoured verbatim — this function never second-guesses a pinned anchor.
+///
+/// Absent an override, the endpoint snaps to one of the four side-centre
+/// anchors, never a corner. When the unpinned end still needs a default
+/// side, it is chosen relative to whichever side the *other* end already
+/// has (pinned or just defaulted):
+/// - boxes that are colinear (share an x or y, so a straight line reaches
+///   head-on with no bend) mirror the other end's orientation — the same
+///   axis, opposite side;
+/// - otherwise an L-bend is unavoidable, and the router's single corner
+///   always flips the direction of travel onto the perpendicular axis (see
+///   [`orthogonal_corner`]), so the unpinned side must sit on *that* axis
+///   to be entered head-on instead of sliding along it.
+///
+/// When neither end is pinned, the exit side is picked first — whichever
+/// axis has the larger centre-to-centre offset — and the entry side then
+/// follows from it by the same rule.
+fn edge_endpoints(
+    src: &Vertex,
+    tgt: &Vertex,
+    exit_override: Option<(f32, f32)>,
+    entry_override: Option<(f32, f32)>,
+) -> (f64, f64, f64, f64) {
+    const EPS: f64 = 1e-6;
+    let src_centre = (src.x + src.w / 2.0, src.y + src.h / 2.0);
+    let tgt_centre = (tgt.x + tgt.w / 2.0, tgt.y + tgt.h / 2.0);
+    let dx = tgt_centre.0 - src_centre.0;
+    let dy = tgt_centre.1 - src_centre.1;
+    let colinear = dx.abs() < EPS || dy.abs() < EPS;
+
+    let (ex, ey, exit_side) = if let Some((nx, ny)) = exit_override {
+        (
+            src.x + f64::from(nx) * src.w,
+            src.y + f64::from(ny) * src.h,
+            side_of_override(nx, ny),
+        )
+    } else {
+        let side = match entry_override {
+            // Entry is pinned: exit takes the perpendicular axis
+            // (or mirrors it, if the boxes are colinear).
+            Some((enx, eny)) => {
+                let entry_side = side_of_override(enx, eny);
+                if colinear {
+                    entry_side.opposite()
+                } else {
+                    facing_side(!entry_side.is_horizontal_side(), dx, dy)
+                }
+            }
+            // Neither end pinned: exit leads, picked by the dominant
+            // centre-to-centre axis.
+            None => facing_side(dy.abs() >= dx.abs(), dx, dy),
+        };
+        let (x, y) = side_centre(src, side);
+        (x, y, side)
+    };
+
+    let (tx, ty) = if let Some((nx, ny)) = entry_override {
+        (tgt.x + f64::from(nx) * tgt.w, tgt.y + f64::from(ny) * tgt.h)
+    } else {
+        let side = if colinear {
+            exit_side.opposite()
+        } else {
+            // Entry faces back toward the source, so the direction is
+            // negated relative to the src -> tgt vector used above.
+            facing_side(!exit_side.is_horizontal_side(), -dx, -dy)
+        };
+        side_centre(tgt, side)
+    };
+
+    (ex, ey, tx, ty)
 }
 
 fn escape_text(s: &str) -> String {
@@ -551,134 +660,108 @@ mod tests {
         assert_eq!(aws4_res_icon_alias("mxgraph.aws4.lambda"), None);
     }
 
-    #[test]
-    fn edge_endpoints_snap_to_perimeter_constraints() {
-        // Canonical 16-point AWS resource-icon constraint set: corners +
-        // 0.25/0.5/0.75 along every edge.
-        let aws_style = "shape=mxgraph.aws4.resourceIcon;\
-             points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],\
-             [0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],\
-             [0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];\
-             resIcon=mxgraph.aws4.lambda;fillColor=#ED7100;";
-        let a = Vertex {
-            id: "a".into(),
+    /// Build a plain, style-less `Vertex` at the given box — the new
+    /// default-endpoint logic works purely off cell geometry, not a
+    /// declared `points=` constraint set, so tests don't need one.
+    fn plain_vertex(id: &str, x: f64, y: f64, w: f64, h: f64) -> Vertex {
+        Vertex {
+            id: id.into(),
             label: String::new(),
-            style: aws_style.into(),
-            x: 0.0,
-            y: 0.0,
-            w: 78.0,
-            h: 78.0,
-        };
-        let b = Vertex {
-            id: "b".into(),
-            label: String::new(),
-            style: aws_style.into(),
-            x: 300.0,
-            y: 0.0,
-            w: 78.0,
-            h: 78.0,
-        };
-        let a_end = pick_endpoint(&a, (b.x + b.w / 2.0, b.y + b.h / 2.0)).unwrap();
-        let b_end = pick_endpoint(&b, (a.x + a.w / 2.0, a.y + a.h / 2.0)).unwrap();
-        // Source endpoint should be on A's right edge (x = 78).
-        assert!(
-            (a_end.0 - 78.0).abs() < 1e-9,
-            "source endpoint x should be on A's right edge (78), got {a_end:?}",
-        );
-        // Target endpoint should be on B's left edge (x = 300).
-        assert!(
-            (b_end.0 - 300.0).abs() < 1e-9,
-            "target endpoint x should be on B's left edge (300), got {b_end:?}",
-        );
-        // With the 16-point set, the right-mid (1, 0.5) is closest to B's
-        // centre — so the source endpoint lands at A's vertical midline
-        // (y = 39), not a corner.
-        assert!(
-            (a_end.1 - 39.0).abs() < 1e-9,
-            "source endpoint y should be A's right-mid (39), got {a_end:?}",
-        );
-        assert!(
-            (b_end.1 - 39.0).abs() < 1e-9,
-            "target endpoint y should be B's left-mid (39), got {b_end:?}",
-        );
-        // And both should NOT be at the cell midpoints (x = 39 / x = 339).
-        assert!(
-            (a_end.0 - 39.0).abs() > 1e-6,
-            "should not pick A's midpoint"
-        );
-        assert!(
-            (b_end.0 - 339.0).abs() > 1e-6,
-            "should not pick B's midpoint"
-        );
+            style: String::new(),
+            x,
+            y,
+            w,
+            h,
+        }
     }
 
     #[test]
-    fn edge_endpoint_overrides_take_priority_over_points() {
-        // Cell carries a 16-point AWS perimeter constraint set, but the
-        // edge declares explicit exitX/exitY and entryX/entryY. The
-        // override must win even when the constraint picker would have
-        // chosen a different point.
-        let aws_style = "shape=mxgraph.aws4.resourceIcon;\
-             points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],\
-             [0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],\
-             [0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];\
-             resIcon=mxgraph.aws4.lambda;fillColor=#ED7100;";
-        let a = Vertex {
-            id: "a".into(),
-            label: String::new(),
-            style: aws_style.into(),
-            x: 0.0,
-            y: 0.0,
-            w: 78.0,
-            h: 78.0,
+    fn default_endpoints_snap_to_side_centres_same_row() {
+        // Two boxes on the same row (aligned y): a straight horizontal
+        // line, so both ends share the same orientation (left/right).
+        let a = plain_vertex("a", 0.0, 0.0, 78.0, 78.0);
+        let b = plain_vertex("b", 300.0, 0.0, 78.0, 78.0);
+        let (sx, sy, tx, ty) = edge_endpoints(&a, &b, None, None);
+        assert_eq!((sx, sy), (78.0, 39.0), "source should be A's right-mid");
+        assert_eq!((tx, ty), (300.0, 39.0), "target should be B's left-mid");
+    }
+
+    #[test]
+    fn default_endpoints_never_land_on_a_corner_when_diagonal() {
+        // Two boxes offset both horizontally and vertically (issue #40's
+        // reported pattern) — neither end may resolve to a corner, and the
+        // route must land head-on: the exit side and entry side must be on
+        // perpendicular axes so the router's single bend (see
+        // `orthogonal_corner`) arrives travelling straight into the
+        // entered side rather than sliding along it.
+        let a = plain_vertex("a", 0.0, 0.0, 78.0, 78.0);
+        let b = plain_vertex("b", 300.0, 200.0, 78.0, 78.0);
+        let (sx, sy, tx, ty) = edge_endpoints(&a, &b, None, None);
+
+        let is_corner = |x: f64, y: f64, v: &Vertex| {
+            let touches_vertical_side = (x - v.x).abs() < 1e-9 || (x - (v.x + v.w)).abs() < 1e-9;
+            let touches_horizontal_side = (y - v.y).abs() < 1e-9 || (y - (v.y + v.h)).abs() < 1e-9;
+            touches_vertical_side && touches_horizontal_side
         };
-        let b = Vertex {
-            id: "b".into(),
-            label: String::new(),
-            style: aws_style.into(),
-            x: 200.0,
-            y: 0.0,
-            w: 78.0,
-            h: 78.0,
-        };
-        // Force right-mid -> left-mid via explicit overrides.
+        assert!(
+            !is_corner(sx, sy, &a),
+            "exit landed on a corner: ({sx}, {sy})"
+        );
+        assert!(
+            !is_corner(tx, ty, &b),
+            "entry landed on a corner: ({tx}, {ty})"
+        );
+
+        // |dy| (200) > |dx| (300... wait see below) decides the exit axis;
+        // here |dx| dominates (300 > 200), so exit is A's right-mid.
+        assert_eq!((sx, sy), (78.0, 39.0), "exit should be A's right-mid");
+        // Perpendicular entry: exit is a left/right (vertical) side, so
+        // entry must be a top/bottom (horizontal) side of B — B's top-mid,
+        // since B sits below A.
+        assert_eq!((tx, ty), (339.0, 200.0), "entry should be B's top-mid");
+    }
+
+    #[test]
+    fn default_endpoints_pick_perpendicular_entry_when_vertical_offset_dominates() {
+        // Mirror of the previous case with the dominant axis flipped:
+        // B sits mostly below A rather than mostly beside it, so the exit
+        // is a top/bottom side and the entry must be left/right.
+        let a = plain_vertex("a", 0.0, 0.0, 78.0, 78.0);
+        let b = plain_vertex("b", 200.0, 300.0, 78.0, 78.0);
+        let (sx, sy, tx, ty) = edge_endpoints(&a, &b, None, None);
+        assert_eq!((sx, sy), (39.0, 78.0), "exit should be A's bottom-mid");
+        assert_eq!((tx, ty), (200.0, 339.0), "entry should be B's left-mid");
+    }
+
+    #[test]
+    fn edge_endpoint_overrides_take_priority_over_defaults() {
+        // Both ends explicitly pinned: the override wins verbatim even
+        // though the boxes are diagonally offset (which would otherwise
+        // pick different sides by default).
+        let a = plain_vertex("a", 0.0, 0.0, 78.0, 78.0);
+        let b = plain_vertex("b", 200.0, 300.0, 78.0, 78.0);
         let exit = Some((1.0_f32, 0.5_f32));
         let entry = Some((0.0_f32, 0.5_f32));
-        let a_end = resolve_endpoint(&a, exit, (b.x + b.w / 2.0, b.y + b.h / 2.0));
-        let b_end = resolve_endpoint(&b, entry, (a.x + a.w / 2.0, a.y + a.h / 2.0));
-        assert!(
-            (a_end.0 - 78.0).abs() < 1e-9 && (a_end.1 - 39.0).abs() < 1e-9,
-            "source must be at right-mid (78, 39), got {a_end:?}",
-        );
-        assert!(
-            (b_end.0 - 200.0).abs() < 1e-9 && (b_end.1 - 39.0).abs() < 1e-9,
-            "target must be at left-mid (200, 39), got {b_end:?}",
+        let (sx, sy, tx, ty) = edge_endpoints(&a, &b, exit, entry);
+        assert_eq!((sx, sy), (78.0, 39.0), "source must be right-mid (78, 39)");
+        assert_eq!(
+            (tx, ty),
+            (200.0, 339.0),
+            "target must be left-mid (200, 339)"
         );
     }
 
     #[test]
-    fn edge_endpoint_without_override_falls_back_to_points_picker() {
-        // No edge-level override: behaviour must match the v0 picker —
-        // snap to the closest declared `points=` constraint.
-        let aws_style = "shape=mxgraph.aws4.resourceIcon;\
-             points=[[0,0,0],[1,0,0],[0,1,0],[1,1,0]];resIcon=mxgraph.aws4.lambda;";
-        let a = Vertex {
-            id: "a".into(),
-            label: String::new(),
-            style: aws_style.into(),
-            x: 0.0,
-            y: 0.0,
-            w: 78.0,
-            h: 78.0,
-        };
-        // Other cell sits to the lower-right of A; constraint picker
-        // should land on A's bottom-right corner (78, 78).
-        let toward = (300.0, 200.0);
-        let p = resolve_endpoint(&a, None, toward);
-        assert!(
-            (p.0 - 78.0).abs() < 1e-9 && (p.1 - 78.0).abs() < 1e-9,
-            "expected bottom-right corner (78, 78), got {p:?}",
-        );
+    fn one_sided_override_still_gets_a_perpendicular_default_partner() {
+        // Only the exit is pinned (to A's bottom-mid); the entry is left
+        // to default. Since A's bottom is a horizontal side, the entry
+        // must default to a vertical (left/right) side of B, not a
+        // corner and not another horizontal side.
+        let a = plain_vertex("a", 0.0, 0.0, 78.0, 78.0);
+        let b = plain_vertex("b", 300.0, 200.0, 78.0, 78.0);
+        let exit = Some((0.5_f32, 1.0_f32));
+        let (_, _, tx, ty) = edge_endpoints(&a, &b, exit, None);
+        assert_eq!((tx, ty), (300.0, 239.0), "entry should be B's left-mid");
     }
 
     #[test]
@@ -706,20 +789,6 @@ mod tests {
             svg.contains("<line x1=\"78\" y1=\"39\" x2=\"200\" y2=\"39\""),
             "expected colinear straight line at y=39; got: {svg}",
         );
-    }
-
-    #[test]
-    fn pick_endpoint_falls_back_when_no_points_declared() {
-        let plain = Vertex {
-            id: "p".into(),
-            label: String::new(),
-            style: "shape=rectangle;fillColor=#cccccc;".into(),
-            x: 10.0,
-            y: 10.0,
-            w: 60.0,
-            h: 40.0,
-        };
-        assert!(pick_endpoint(&plain, (100.0, 100.0)).is_none());
     }
 
     #[test]
@@ -789,8 +858,10 @@ mod tests {
 
     #[test]
     fn orthogonal_corner_endpoint_not_on_edge_yields_none() {
-        // No declared connection points -> endpoint defaults to the cell
-        // centre, which sits on no edge. We have no orientation to pick.
+        // A point that isn't on any side of the cell (e.g. a cell centre,
+        // which `edge_endpoints` never actually produces but this
+        // lower-level helper doesn't assume) — there is no orientation to
+        // pick.
         let src = Vertex {
             id: "a".into(),
             label: String::new(),
@@ -805,16 +876,17 @@ mod tests {
 
     #[test]
     fn renders_orthogonal_edge_as_path_with_corner() {
-        // Two AWS resource icons offset both horizontally and vertically —
-        // the picker lands on A's right-mid and B's left-mid, so the
-        // route must bend.
+        // Two AWS resource icons offset both horizontally and vertically
+        // (issue #40's reported pattern) — the default picker lands on
+        // A's right-mid and B's top-mid (perpendicular to the exit side),
+        // never a corner, so the route bends and arrives head-on.
         let xml = r#"
 <mxfile compressed="false"><diagram><mxGraphModel><root>
 <mxCell id="0"/><mxCell id="1" parent="0"/>
-<mxCell id="a" value="A" vertex="1" parent="1" style="shape=mxgraph.aws4.resourceIcon;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];resIcon=mxgraph.aws4.lambda;fillColor=#ED7100;">
+<mxCell id="a" value="A" vertex="1" parent="1" style="shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;fillColor=#ED7100;">
   <mxGeometry x="0" y="0" width="78" height="78" as="geometry"/>
 </mxCell>
-<mxCell id="b" value="B" vertex="1" parent="1" style="shape=mxgraph.aws4.resourceIcon;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];resIcon=mxgraph.aws4.lambda;fillColor=#ED7100;">
+<mxCell id="b" value="B" vertex="1" parent="1" style="shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;fillColor=#ED7100;">
   <mxGeometry x="300" y="200" width="78" height="78" as="geometry"/>
 </mxCell>
 <mxCell id="e1" edge="1" parent="1" source="a" target="b" style="edgeStyle=orthogonalEdgeStyle;html=0;endArrow=open;rounded=0;">
@@ -822,28 +894,30 @@ mod tests {
 </mxCell>
 </root></mxGraphModel></diagram></mxfile>"#;
         let svg = render(xml).unwrap();
-        // The picker snaps A's endpoint to its bottom-right corner (78, 78)
-        // — the constraint nearest to B's centre (339, 239) — and B's
-        // endpoint to its top-left corner (300, 200). Source endpoint sits
-        // on the right edge of A (x = 78), so routing leaves horizontally:
-        // corner at (end.x, start.y) = (300, 78).
+        // |dx| (300) dominates |dy| (200) from A's centre (39, 39) to B's
+        // centre (339, 239), so the exit is A's right-mid (78, 39). The
+        // entry must be perpendicular to that (a top/bottom side of B),
+        // oriented toward A: B's top-mid (339, 200). The corner sits at
+        // (entry.x, exit.y) = (339, 39).
         assert!(
-            svg.contains("<path d=\"M 78 78 L 300 78 L 300 200\""),
-            "expected orthogonal path; got: {svg}",
+            svg.contains("<path d=\"M 78 39 L 339 39 L 339 200\""),
+            "expected orthogonal path landing head-on; got: {svg}",
         );
     }
 
     #[test]
     fn straight_line_edge_when_edgestyle_missing() {
         // No `edgeStyle=orthogonalEdgeStyle` in the edge style — keep
-        // the legacy straight-line behaviour.
+        // the legacy straight-line behaviour. Endpoint defaulting is
+        // unaffected by the missing `edgeStyle`; only the corner-bend
+        // rendering is.
         let xml = r#"
 <mxfile compressed="false"><diagram><mxGraphModel><root>
 <mxCell id="0"/><mxCell id="1" parent="0"/>
-<mxCell id="a" value="A" vertex="1" parent="1" style="shape=mxgraph.aws4.resourceIcon;points=[[1,0.5,0]];resIcon=mxgraph.aws4.lambda;fillColor=#ED7100;">
+<mxCell id="a" value="A" vertex="1" parent="1" style="shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;fillColor=#ED7100;">
   <mxGeometry x="0" y="0" width="78" height="78" as="geometry"/>
 </mxCell>
-<mxCell id="b" value="B" vertex="1" parent="1" style="shape=mxgraph.aws4.resourceIcon;points=[[0,0.5,0]];resIcon=mxgraph.aws4.lambda;fillColor=#ED7100;">
+<mxCell id="b" value="B" vertex="1" parent="1" style="shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;fillColor=#ED7100;">
   <mxGeometry x="300" y="200" width="78" height="78" as="geometry"/>
 </mxCell>
 <mxCell id="e1" edge="1" parent="1" source="a" target="b" style="endArrow=open;rounded=0;">
@@ -851,9 +925,10 @@ mod tests {
 </mxCell>
 </root></mxGraphModel></diagram></mxfile>"#;
         let svg = render(xml).unwrap();
-        // No path-with-corner; the legacy <line> is emitted instead.
+        // No path-with-corner; the legacy <line> is emitted instead,
+        // straight from A's right-mid to B's top-mid.
         assert!(
-            svg.contains("<line x1=\"78\" y1=\"39\" x2=\"300\" y2=\"239\""),
+            svg.contains("<line x1=\"78\" y1=\"39\" x2=\"339\" y2=\"200\""),
             "expected straight <line>; got: {svg}",
         );
     }

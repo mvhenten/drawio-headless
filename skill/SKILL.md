@@ -98,18 +98,20 @@ that reads correctly. Full field reference:
    a PNG and check before trusting an Azure kind for fidelity.
 2. **Arrows arrive head-on — the L-bend routing rule.** Each edge is
    either a straight line (source and target already colinear) or one
-   automatic L-bend; there are no manual waypoints. The exit side always
-   determines the final segment's orientation:
-   - exit top/bottom → final segment is vertical → must enter the
-     target's **top/bottom** to land head-on
-   - exit left/right → final segment is horizontal → must enter the
+   automatic L-bend; there are no manual waypoints. Leaving a side flips
+   the direction of travel, so the exit side determines the *opposite*
+   orientation for the final segment:
+   - exit top/bottom → final segment is horizontal → must enter the
      target's **left/right** to land head-on
-   Pin both ends explicitly with `exit_x`/`exit_y` and
-   `entry_x`/`entry_y` (each `0..1`; both members of a pair are required
-   or the pair is ignored). An arrowhead that slides along a box edge
-   instead of landing on it means the exit/entry sides contradict the
-   nodes' actual relative position — fix the anchors or move the node,
-   don't leave it.
+   - exit left/right → final segment is vertical → must enter the
+     target's **top/bottom** to land head-on
+   Omitting `exit_x`/`exit_y`/`entry_x`/`entry_y` gets this right
+   automatically: the departure snaps to the nearest side-centre (never a
+   corner) and the entry side is picked to satisfy the rule above. Only
+   pin anchors explicitly when the default picks the wrong side (e.g. two
+   edges fanning into the same side, per rule 4) — and when pinning both,
+   respect the same pairing, or the arrowhead will slide along the box
+   edge instead of landing on it.
 3. **Align nodes on shared axes.** A flow meant to read as one lane
    (A → B → C) needs its nodes sharing one `x` (vertical lane) or one `y`
    (horizontal lane) so the connecting edges run straight rather than on
