@@ -1,13 +1,31 @@
 name: Release
 
-# Builds cross-platform release binaries on a `v*.*.*` tag push, attaches them
-# to the GitHub Release, then publishes the npm wrapper package.
+# Builds cross-platform release binaries, attaches them to a GitHub Release,
+# then publishes the npm wrapper package.
 #
-# Manual `workflow_dispatch` is also supported for testing the build matrix
-# without cutting a real release (the publish jobs are tag-gated).
+# Two ways in:
+#   - `push` to `main` -- the normal path. The `version` job computes the next
+#     semver from Conventional Commits since the last `v*.*.*` tag (fix ->
+#     patch, feat -> minor, `!`/`BREAKING CHANGE` -> major). If nothing since
+#     the last tag is releasable (docs/ci/chore/style/test only), it outputs
+#     "skip" and every later job is skipped -- no release, no tag, no publish.
+#   - `push` of a `v*.*.*` tag -- manual override, e.g. to re-cut a release by
+#     hand. The tag itself is the version; no commit-log math involved.
+#   - `workflow_dispatch` -- build-only smoke test of the matrix, no tag, no
+#     release, no publish.
+#
+# Nothing in this workflow commits or pushes to `main`, and no job depends on
+# a pushed tag re-triggering a workflow (a GITHUB_TOKEN-pushed tag doesn't do
+# that anyway). The `release` job creates the tag itself, via the GitHub API,
+# in this same run, on the commit that's building.
+#
+# The `version` job is the only source of truth for the version at build/
+# release time. The committed `Cargo.toml`/`npm/package.json` version fields
+# are not read by this workflow and are vestigial between releases.
 
 on:
   push:
+    branches: [main]
     tags:
       - "v*.*.*"
   workflow_dispatch:
@@ -16,8 +34,71 @@ permissions:
   contents: write
 
 jobs:
+  version:
+    name: Compute release version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.decide.outputs.version }}
+      tag: ${{ steps.decide.outputs.tag }}
+      release: ${{ steps.decide.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # need full history + tags for next-version.sh
+
+      - name: Decide version
+        id: decide
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+            {
+              echo "version=${version}"
+              echo "tag=${GITHUB_REF_NAME}"
+              echo "release=true"
+            } >> "$GITHUB_OUTPUT"
+            echo "Tag push: releasing ${GITHUB_REF_NAME}"
+            exit 0
+          fi
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            {
+              echo "version=0.0.0-dev"
+              echo "tag="
+              echo "release=false"
+            } >> "$GITHUB_OUTPUT"
+            echo "workflow_dispatch: build-only smoke test, no release"
+            exit 0
+          fi
+
+          if version="$(scripts/next-version.sh)"; then
+            {
+              echo "version=${version}"
+              echo "tag=v${version}"
+              echo "release=true"
+            } >> "$GITHUB_OUTPUT"
+            echo "Computed next version: ${version}"
+          else
+            code=$?
+            if [ "$code" -eq 10 ]; then
+              {
+                echo "version="
+                echo "tag="
+                echo "release=false"
+              } >> "$GITHUB_OUTPUT"
+              echo "No releasable commits since last tag -- skipping release."
+            else
+              echo "next-version.sh failed with exit ${code}" >&2
+              exit "$code"
+            fi
+          fi
+
   build:
     name: build ${{ matrix.target }}
+    needs: version
+    if: needs.version.outputs.release == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -45,6 +126,10 @@ jobs:
             archive: zip
     steps:
       - uses: actions/checkout@v4
+
+      - name: Patch workspace version (checkout only, not committed)
+        shell: bash
+        run: scripts/patch-version.sh "${{ needs.version.outputs.version }}"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -77,13 +162,11 @@ jobs:
       - name: Stage artifact (unix)
         if: matrix.archive == 'tar.gz'
         shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           set -eu
-          version="${GITHUB_REF_NAME#v}"
-          if [ -z "$version" ] || [ "$version" = "$GITHUB_REF_NAME" ]; then
-            version="0.0.0-dev"
-          fi
-          stage="drawio-headless-${version}-${{ matrix.target }}"
+          stage="drawio-headless-${VERSION}-${{ matrix.target }}"
           mkdir -p "dist/${stage}"
           cp "target/${{ matrix.target }}/release/drawio-headless" "dist/${stage}/drawio-headless"
           cp LICENSE "dist/${stage}/LICENSE"
@@ -96,9 +179,10 @@ jobs:
       - name: Stage artifact (windows)
         if: matrix.archive == 'zip'
         shell: pwsh
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
-          $version = $env:GITHUB_REF_NAME -replace '^v',''
-          if (-not $version -or $version -eq $env:GITHUB_REF_NAME) { $version = '0.0.0-dev' }
+          $version = $env:VERSION
           $stage = "drawio-headless-$version-${{ matrix.target }}"
           New-Item -ItemType Directory -Force -Path "dist/$stage" | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/drawio-headless.exe" "dist/$stage/drawio-headless.exe"
@@ -121,8 +205,8 @@ jobs:
 
   release:
     name: GitHub Release
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [version, build]
+    if: needs.version.outputs.release == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -136,6 +220,11 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          # Pin the tag explicitly: on a main-push release this tag doesn't
+          # exist yet -- action-gh-release creates it against the commit this
+          # workflow is running on. On a tag-push release it already exists
+          # and this just confirms it.
+          tag_name: ${{ needs.version.outputs.tag }}
           files: |
             dist/*.tar.gz
             dist/*.zip
@@ -145,8 +234,8 @@ jobs:
 
   publish-npm:
     name: Publish npm package
-    needs: release
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [version, release]
+    if: needs.version.outputs.release == 'true'
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -163,12 +252,13 @@ jobs:
           npm install -g npm@latest
           npm --version
 
-      - name: Sync npm package version to tag
+      - name: Sync npm package version
         working-directory: npm
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           set -eu
-          version="${GITHUB_REF_NAME#v}"
-          node -e "const fs=require('fs');const p=require('./package.json');p.version='${version}';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');"
+          node -e "const fs=require('fs');const p=require('./package.json');p.version=process.env.VERSION;fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');"
           head -5 package.json
 
       - name: Publish to npm

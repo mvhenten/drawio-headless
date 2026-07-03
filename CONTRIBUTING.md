@@ -15,6 +15,14 @@ cargo fmt --all --check
 
 GitHub Actions runs the full suite on every push.
 
+## Releasing
+
+Merging to `main` releases automatically -- `.github/workflows/release.yml`
+computes the next version from Conventional Commit prefixes (`fix:` ->
+patch, `feat:` -> minor, `!`/`BREAKING CHANGE:` -> major) since the last tag,
+then builds, tags, and publishes. A push with no `feat`/`fix`/breaking commits
+skips the release. Push a `v*.*.*` tag by hand to force a specific version.
+
 ## Snapshot tests (visual regression)
 
 `crates/closed-loop-test/tests/snapshots.rs` renders a handful of fixed
