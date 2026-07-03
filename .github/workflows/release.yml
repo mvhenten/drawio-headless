@@ -148,15 +148,21 @@ jobs:
     needs: release
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    env:
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
+
+      - name: Update npm to latest (OIDC trusted publishing needs >= 11.5.1)
+        run: |
+          npm install -g npm@latest
+          npm --version
 
       - name: Sync npm package version to tag
         working-directory: npm
@@ -167,14 +173,5 @@ jobs:
           head -5 package.json
 
       - name: Publish to npm
-        if: ${{ env.NPM_TOKEN != '' }}
         working-directory: npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --access public
-
-      - name: Skip publish (no NPM_TOKEN)
-        if: ${{ env.NPM_TOKEN == '' }}
-        run: |
-          echo "NPM_TOKEN secret not configured on this repo; skipping npm publish."
-          echo "Set the NPM_TOKEN secret to enable automatic publishing on tag push."
