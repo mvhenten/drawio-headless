@@ -19,6 +19,10 @@
 //!    polyline (one corner); other edges fall back to a straight line.
 //!    Endpoints carry a simple arrowhead.
 //!
+//! A vertex's `rotation` style key rotates the rendered shape (tile/glyph,
+//! not the label) around the cell's own centre via an SVG `rotate(deg cx
+//! cy)` transform — a rotation relative to the cell, not the page.
+//!
 //! Stencil library coverage
 //! ------------------------
 //! Four libraries are bundled at compile time as static strings:
@@ -31,12 +35,15 @@
 //!
 //! Each library is parsed lazily via its own [`OnceLock`].
 //!
-//! Render fidelity is not 1:1 with the upstream drawio app. Azure and GCP
-//! shapes lean heavily on stencil DSL commands that this renderer does not
-//! yet fully implement (`<save>`/`<restore>`, `<alpha>`, `<strokecolor>`,
-//! `<fillcolor>` — tracked in issue #7; `<arc>` is now supported). Those
-//! remaining commands are silently skipped, so a shape's outer silhouette
-//! may render with reduced detail.
+//! See [`stencil`] for the mxStencil DSL command coverage (issue #7):
+//! `<save>`/`<restore>`, `<strokecolor>`/`<fillcolor>`/`<fontcolor>`,
+//! `<strokewidth>`, `<dashed>`, and `<text>` are all implemented; `<image>`
+//! is rejected with [`RenderError::UnsupportedStencilCmd`] rather than
+//! silently dropped, since this crate has no raster-embedding support.
+//! Commands outside that candidate list (`<alpha>`, `<dashpattern>`,
+//! `<linecap>`, `<linejoin>`, `<miterlimit>`, `<fontstyle>`, `<fontfamily>`,
+//! `<fontsize>`, `<include-shape>`) remain silently skipped, so a shape's
+//! outer silhouette may still render with reduced detail.
 
 pub mod inflate;
 pub mod model;
@@ -287,16 +294,24 @@ fn render_vertex(out: &mut String, v: &Vertex) {
         h: v.h,
     };
 
+    // Cell-relative rotation (issue #7): the `rotation` style key rotates
+    // the shape around its own centre, not the page. Build the shape into
+    // its own buffer so it can be wrapped in a single SVG `rotate(deg cx
+    // cy)` transform; the label (rendered separately, below the cell) is
+    // intentionally left unrotated — it already has no positional relation
+    // to the shape's own coordinate space in this renderer.
+    let mut shape_svg = String::new();
+
     if shape == "mxgraph.aws4.resourceIcon" {
         // AWS resource-icon: coloured tile + white glyph from stencil.
         let _ = write!(
-            out,
+            shape_svg,
             "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{fill}\" \
              stroke=\"none\" rx=\"3\" ry=\"3\"/>",
             v.x, v.y, v.w, v.h
         );
         if let Some((stencil, _)) = resolve_stencil(&style) {
-            out.push_str(&render_stencil_to_svg(
+            shape_svg.push_str(&render_stencil_to_svg(
                 stencil,
                 cell,
                 0.18,
@@ -312,12 +327,12 @@ fn render_vertex(out: &mut String, v: &Vertex) {
                 // (using the declared fillColor) with a white glyph on top.
                 let tile_fill = style.get_or("fillColor", "#2875E2");
                 let _ = write!(
-                    out,
+                    shape_svg,
                     "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" \
                      fill=\"{tile_fill}\" stroke=\"none\" rx=\"4\" ry=\"4\"/>",
                     v.x, v.y, v.w, v.h
                 );
-                out.push_str(&render_stencil_to_svg(
+                shape_svg.push_str(&render_stencil_to_svg(
                     stencil,
                     cell,
                     0.18,
@@ -336,7 +351,7 @@ fn render_vertex(out: &mut String, v: &Vertex) {
                     "#4285F4"
                 };
                 let glyph = style.get_or("fillColor", default);
-                out.push_str(&render_stencil_to_svg(
+                shape_svg.push_str(&render_stencil_to_svg(
                     stencil,
                     cell,
                     0.04,
@@ -349,11 +364,25 @@ fn render_vertex(out: &mut String, v: &Vertex) {
     } else {
         // Plain rect fallback for unknown shapes.
         let _ = write!(
-            out,
+            shape_svg,
             "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{fill}\" \
              stroke=\"#999\" stroke-width=\"1\"/>",
             v.x, v.y, v.w, v.h
         );
+    }
+
+    let rotation: f64 = style
+        .get("rotation")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0.0);
+    if rotation == 0.0 {
+        out.push_str(&shape_svg);
+    } else {
+        let cx = v.x + v.w / 2.0;
+        let cy = v.y + v.h / 2.0;
+        let _ = write!(out, "<g transform=\"rotate({rotation} {cx} {cy})\">");
+        out.push_str(&shape_svg);
+        out.push_str("</g>");
     }
 
     // Label: plain text below the cell, horizontally centred.
@@ -592,7 +621,7 @@ fn edge_endpoints(
     (ex, ey, tx, ty)
 }
 
-fn escape_text(s: &str) -> String {
+pub(crate) fn escape_text(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
@@ -645,6 +674,45 @@ mod tests {
             svg.contains("<path"),
             "expected stencil glyph path, got only: {svg}",
         );
+    }
+
+    #[test]
+    fn cell_rotation_wraps_the_shape_in_an_svg_rotate_transform() {
+        // Issue #7's <rotation> candidate: drawio's `rotation` style key
+        // rotates a cell around its own centre, not the page. Confirm the
+        // shape gets wrapped in a `rotate(deg cx cy)` transform group using
+        // the cell's own centre, and that the underlying rect keeps its
+        // unrotated (axis-aligned) coordinates — the transform does the
+        // rotating, not pre-rotated geometry.
+        let xml = r#"
+<mxfile compressed="false"><diagram><mxGraphModel><root>
+<mxCell id="0"/><mxCell id="1" parent="0"/>
+<mxCell id="r" value="Tilted" vertex="1" parent="1" style="rounded=0;fillColor=#dae8fc;rotation=45;">
+  <mxGeometry x="100" y="100" width="80" height="40" as="geometry"/>
+</mxCell>
+</root></mxGraphModel></diagram></mxfile>"#;
+        let svg = render(xml).unwrap();
+        assert!(
+            svg.contains("<g transform=\"rotate(45 140 120)\">"),
+            "expected a rotate transform around the cell centre; got: {svg}"
+        );
+        assert!(
+            svg.contains("<rect x=\"100\" y=\"100\" width=\"80\" height=\"40\" fill=\"#dae8fc\""),
+            "expected the rect's own coordinates to stay unrotated; got: {svg}"
+        );
+    }
+
+    #[test]
+    fn zero_rotation_omits_the_transform_wrapper() {
+        let xml = r#"
+<mxfile compressed="false"><diagram><mxGraphModel><root>
+<mxCell id="0"/><mxCell id="1" parent="0"/>
+<mxCell id="r" value="Flat" vertex="1" parent="1" style="rounded=0;fillColor=#dae8fc;">
+  <mxGeometry x="10" y="10" width="80" height="40" as="geometry"/>
+</mxCell>
+</root></mxGraphModel></diagram></mxfile>"#;
+        let svg = render(xml).unwrap();
+        assert!(!svg.contains("rotate("));
     }
 
     #[test]
