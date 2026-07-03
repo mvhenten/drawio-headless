@@ -550,11 +550,13 @@ fn edge_endpoints(
     let dy = tgt_centre.1 - src_centre.1;
     let colinear = dx.abs() < EPS || dy.abs() < EPS;
 
-    let (ex, ey, exit_side) = if let Some((nx, ny)) = exit_override { (
-        src.x + f64::from(nx) * src.w,
-        src.y + f64::from(ny) * src.h,
-        side_of_override(nx, ny),
-    ) } else {
+    let (ex, ey, exit_side) = if let Some((nx, ny)) = exit_override {
+        (
+            src.x + f64::from(nx) * src.w,
+            src.y + f64::from(ny) * src.h,
+            side_of_override(nx, ny),
+        )
+    } else {
         let side = match entry_override {
             // Entry is pinned: exit takes the perpendicular axis
             // (or mirrors it, if the boxes are colinear).
@@ -574,7 +576,9 @@ fn edge_endpoints(
         (x, y, side)
     };
 
-    let (tx, ty) = if let Some((nx, ny)) = entry_override { (tgt.x + f64::from(nx) * tgt.w, tgt.y + f64::from(ny) * tgt.h) } else {
+    let (tx, ty) = if let Some((nx, ny)) = entry_override {
+        (tgt.x + f64::from(nx) * tgt.w, tgt.y + f64::from(ny) * tgt.h)
+    } else {
         let side = if colinear {
             exit_side.opposite()
         } else {
