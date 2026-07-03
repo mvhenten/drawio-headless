@@ -21,8 +21,8 @@ fn main() -> std::io::Result<()> {
     let database = d.add_node(generic::database("db", "Database").at(140.0, 640.0));
     let queue = d.add_node(generic::queue("queue", "Job queue").at(560.0, 640.0));
 
-    d.connect(&browser, &lb).exit(0.5, 1.0).entry(0.3, 0.0);
-    d.connect(&mobile, &lb).exit(0.5, 1.0).entry(0.7, 0.0);
+    d.connect(&browser, &lb).exit(0.5, 1.0).entry(0.0, 0.5);
+    d.connect(&mobile, &lb).exit(0.5, 1.0).entry(1.0, 0.5);
     d.connect(&lb, &app);
     d.connect(&app, &database).exit(0.0, 1.0).entry(0.5, 0.0);
     d.connect(&app, &queue).exit(1.0, 1.0).entry(0.5, 0.0);
