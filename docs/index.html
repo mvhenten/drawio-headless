@@ -148,7 +148,7 @@
     consumes, so authored documents are interoperable in both directions.
   </p>
   <p>
-    The four worked examples below are each produced by a single Rust file under
+    The eight worked examples below are each produced by a single Rust file under
     <a href="https://github.com/mvhenten/drawio-headless/tree/main/crates/examples/examples"><code>crates/examples/examples/</code></a>.
     Running the example writes the <code>.drawio</code> source and the rendered <code>.svg</code> into this
     <code>docs/examples/</code> directory; the page just embeds those files inline.
@@ -361,6 +361,206 @@ fn main() -&gt; std::io::Result&lt;()&gt; {
     d.connect(&amp;queue, &amp;document);
 
     drawio_headless_examples::write_artifacts("hybrid-identity", &amp;d)
+}
+</code></pre>
+  </details>
+</section>
+
+<section class="example" id="order-search-pipeline">
+  <h2>5. Order search indexing pipeline</h2>
+  <p class="lead">
+    An SQS queue feeds an ingest Lambda that writes to DynamoDB, and a
+    second Lambda indexes those orders into OpenSearch &mdash; five distinct
+    AWS service tiles in one straight, colinear lane.
+  </p>
+  <div class="diagram">
+    <img src="examples/order-search-pipeline.svg" alt="Order search indexing pipeline: SQS queue triggers an ingest Lambda that writes to a DynamoDB orders table, which an indexer Lambda reads to populate an OpenSearch search index.">
+  </div>
+  <div class="actions">
+    <a class="open-in-drawio" data-drawio-src="examples/order-search-pipeline.drawio" data-title="Order search indexing pipeline" href="examples/order-search-pipeline.drawio">Open in draw.io &#8599;</a>
+    <a href="examples/order-search-pipeline.drawio">Download .drawio</a>
+    <a href="examples/order-search-pipeline.svg">Download SVG</a>
+    <a href="https://github.com/mvhenten/drawio-headless/blob/main/crates/examples/examples/order_search_pipeline.rs">Source: order_search_pipeline.rs</a>
+  </div>
+  <details>
+    <summary>Show order_search_pipeline.rs</summary>
+<pre><code>use drawio_author::{Diagram, aws};
+
+fn main() -&gt; std::io::Result&lt;()&gt; {
+    let mut d = Diagram::new("Order search indexing pipeline");
+
+    let queue = d.add_node(aws::sqs("queue", "Order events").at(80.0, 120.0));
+    let ingest = d.add_node(aws::lambda("ingest", "Ingest Lambda").at(320.0, 120.0));
+    let orders = d.add_node(aws::dynamodb("orders", "Orders table").at(560.0, 120.0));
+    let indexer = d.add_node(aws::lambda("indexer", "Indexer Lambda").at(800.0, 120.0));
+    let search = d.add_node(aws::opensearch("search", "Order search index").at(1040.0, 120.0));
+
+    d.connect(&amp;queue, &amp;ingest);
+    d.connect(&amp;ingest, &amp;orders);
+    d.connect(&amp;orders, &amp;indexer);
+    d.connect(&amp;indexer, &amp;search);
+
+    drawio_headless_examples::write_artifacts("order-search-pipeline", &amp;d)
+}
+</code></pre>
+  </details>
+</section>
+
+<section class="example" id="three-tier-web">
+  <h2>6. Three-tier web app</h2>
+  <p class="lead">
+    Browser and mobile clients hit a load balancer fronting an app tier,
+    which reads/writes a vendor-neutral database and pushes async work onto
+    a vendor-neutral queue &mdash; mixing <code>client::*</code> and
+    <code>generic::*</code> with AWS tiles, with a fan-in at the top and a
+    fan-out at the bottom.
+  </p>
+  <div class="diagram">
+    <img src="examples/three-tier-web.svg" alt="Three-tier web app: a browser and a mobile app both connect to a load balancer, which connects to an app tier, which connects to a database and a job queue.">
+  </div>
+  <div class="actions">
+    <a class="open-in-drawio" data-drawio-src="examples/three-tier-web.drawio" data-title="Three-tier web app" href="examples/three-tier-web.drawio">Open in draw.io &#8599;</a>
+    <a href="examples/three-tier-web.drawio">Download .drawio</a>
+    <a href="examples/three-tier-web.svg">Download SVG</a>
+    <a href="https://github.com/mvhenten/drawio-headless/blob/main/crates/examples/examples/three_tier_web.rs">Source: three_tier_web.rs</a>
+  </div>
+  <details>
+    <summary>Show three_tier_web.rs</summary>
+<pre><code>use drawio_author::{Diagram, aws, client, generic};
+
+fn main() -&gt; std::io::Result&lt;()&gt; {
+    let mut d = Diagram::new("Three-tier web app");
+
+    let browser = d.add_node(client::browser("browser", "Browser").at(200.0, 40.0));
+    let mobile = d.add_node(client::mobile("mobile", "Mobile app").at(440.0, 40.0));
+
+    let lb = d.add_node(aws::elastic_load_balancing("lb", "Load balancer").at(320.0, 240.0));
+    let app = d.add_node(aws::ecs("app", "App tier").at(320.0, 440.0));
+
+    let database = d.add_node(generic::database("db", "Database").at(140.0, 640.0));
+    let queue = d.add_node(generic::queue("queue", "Job queue").at(560.0, 640.0));
+
+    d.connect(&amp;browser, &amp;lb).exit(0.5, 1.0).entry(0.3, 0.0);
+    d.connect(&amp;mobile, &amp;lb).exit(0.5, 1.0).entry(0.7, 0.0);
+    d.connect(&amp;lb, &amp;app);
+    d.connect(&amp;app, &amp;database).exit(0.0, 1.0).entry(0.5, 0.0);
+    d.connect(&amp;app, &amp;queue).exit(1.0, 1.0).entry(0.5, 0.0);
+
+    drawio_headless_examples::write_artifacts("three-tier-web", &amp;d)
+}
+</code></pre>
+  </details>
+</section>
+
+<section class="example" id="streaming-lanes">
+  <h2>7. Streaming data pipeline</h2>
+  <p class="lead">
+    One upstream feed fans out into two independent lanes &mdash; real-time
+    (Lambda into ElastiCache for a live dashboard) and batch (S3 into
+    Athena for ad-hoc queries) &mdash; each its own straight vertical column,
+    with no edge labels needed to tell them apart.
+  </p>
+  <div class="diagram">
+    <img src="examples/streaming-lanes.svg" alt="Streaming data pipeline: an upstream feed sends events to a Kinesis stream, which fans out into a real-time lane (Lambda to ElastiCache) and a batch lane (S3 to Athena).">
+  </div>
+  <div class="actions">
+    <a class="open-in-drawio" data-drawio-src="examples/streaming-lanes.drawio" data-title="Streaming data pipeline" href="examples/streaming-lanes.drawio">Open in draw.io &#8599;</a>
+    <a href="examples/streaming-lanes.drawio">Download .drawio</a>
+    <a href="examples/streaming-lanes.svg">Download SVG</a>
+    <a href="https://github.com/mvhenten/drawio-headless/blob/main/crates/examples/examples/streaming_lanes.rs">Source: streaming_lanes.rs</a>
+  </div>
+  <details>
+    <summary>Show streaming_lanes.rs</summary>
+<pre><code>use drawio_author::{Diagram, aws, client};
+
+fn main() -&gt; std::io::Result&lt;()&gt; {
+    let mut d = Diagram::new("Streaming data pipeline");
+
+    let source = d.add_node(client::external_system("source", "Upstream feed").at(440.0, 40.0));
+    let stream = d.add_node(aws::kinesis("stream", "Event stream").at(440.0, 220.0));
+
+    let processor = d.add_node(aws::lambda("processor", "Stream processor").at(200.0, 420.0));
+    let cache = d.add_node(aws::elasticache("cache", "Live dashboard cache").at(200.0, 600.0));
+
+    let raw = d.add_node(aws::s3("raw", "Raw data lake").at(680.0, 420.0));
+    let athena = d.add_node(aws::athena("athena", "Ad-hoc queries").at(680.0, 600.0));
+
+    d.connect(&amp;source, &amp;stream);
+    d.connect(&amp;stream, &amp;processor)
+        .exit(0.0, 1.0)
+        .entry(0.5, 0.0);
+    d.connect(&amp;stream, &amp;raw).exit(1.0, 1.0).entry(0.5, 0.0);
+    d.connect(&amp;processor, &amp;cache);
+    d.connect(&amp;raw, &amp;athena);
+
+    drawio_headless_examples::write_artifacts("streaming-lanes", &amp;d)
+}
+</code></pre>
+  </details>
+</section>
+
+<section class="example" id="k8s-deployment">
+  <h2>8. Kubernetes deployment topology</h2>
+  <p class="lead">
+    A browser reaches an Ingress fronting a Service, Deployment, ReplicaSet
+    and Pod inside the "orders" namespace, with a ConfigMap and Secret
+    feeding the Deployment and a cluster-scoped PersistentVolume attached
+    to the Pod from outside it. Uses <code>GroupKind::Generic</code> &mdash;
+    a plain grey dashed container, unlike the AWS-account boundary in
+    example 2.
+  </p>
+  <div class="diagram">
+    <img src="examples/k8s-deployment.svg" alt="Kubernetes deployment topology: a browser connects to an Ingress, which connects to a Service, Deployment, ReplicaSet and Pod inside a dashed 'Namespace: orders' container; a ConfigMap and Secret feed the Deployment, and the Pod connects to a PersistentVolume outside the namespace.">
+  </div>
+  <div class="actions">
+    <a class="open-in-drawio" data-drawio-src="examples/k8s-deployment.drawio" data-title="Kubernetes deployment topology" href="examples/k8s-deployment.drawio">Open in draw.io &#8599;</a>
+    <a href="examples/k8s-deployment.drawio">Download .drawio</a>
+    <a href="examples/k8s-deployment.svg">Download SVG</a>
+    <a href="https://github.com/mvhenten/drawio-headless/blob/main/crates/examples/examples/k8s_deployment.rs">Source: k8s_deployment.rs</a>
+  </div>
+  <details>
+    <summary>Show k8s_deployment.rs</summary>
+<pre><code>use drawio_author::{Diagram, GroupKind, GroupOpts, client, k8s};
+
+fn main() -&gt; std::io::Result&lt;()&gt; {
+    let mut d = Diagram::new("Kubernetes deployment topology");
+
+    d.add_group(GroupOpts::new(
+        "orders-ns",
+        "Namespace: orders",
+        200.0,
+        280.0,
+        270.0,
+        510.0,
+        GroupKind::Generic,
+    ));
+
+    let browser = d.add_node(client::browser("browser", "Browser").at(386.0, 40.0));
+    let ingress = d.add_node(k8s::ingress("ingress", "Ingress").at(400.0, 180.0));
+
+    let service = d.add_node(k8s::service("service", "Service").at(400.0, 300.0));
+    let config_map = d.add_node(k8s::config_map("config", "Config").at(220.0, 420.0));
+    let secret = d.add_node(k8s::secret("secret", "Secret").at(220.0, 520.0));
+    let deployment = d.add_node(k8s::deployment("deployment", "Deployment").at(400.0, 450.0));
+    let replica_set = d.add_node(k8s::replica_set("replicas", "ReplicaSet").at(400.0, 600.0));
+    let pod = d.add_node(k8s::pod("pod", "Pod").at(400.0, 720.0));
+
+    let volume = d.add_node(k8s::persistent_volume("volume", "Volume").at(700.0, 720.0));
+
+    d.connect(&amp;browser, &amp;ingress);
+    d.connect(&amp;ingress, &amp;service);
+    d.connect(&amp;service, &amp;deployment);
+    d.connect(&amp;config_map, &amp;deployment)
+        .exit(1.0, 0.5)
+        .entry(0.0, 0.3);
+    d.connect(&amp;secret, &amp;deployment)
+        .exit(1.0, 0.5)
+        .entry(0.0, 0.7);
+    d.connect(&amp;deployment, &amp;replica_set);
+    d.connect(&amp;replica_set, &amp;pod);
+    d.connect(&amp;pod, &amp;volume);
+
+    drawio_headless_examples::write_artifacts("k8s-deployment", &amp;d)
 }
 </code></pre>
   </details>
