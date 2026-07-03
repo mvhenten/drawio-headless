@@ -154,7 +154,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "closed-loop-test"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "drawio-author",
  "drawio-render",
@@ -201,11 +201,11 @@ checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
 
 [[package]]
 name = "drawio-author"
-version = "0.1.1"
+version = "0.1.2"
 
 [[package]]
 name = "drawio-headless"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "clap",
  "drawio-author",
@@ -218,7 +218,7 @@ dependencies = [
 
 [[package]]
 name = "drawio-headless-examples"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "drawio-author",
  "drawio-render",
@@ -226,7 +226,7 @@ dependencies = [
 
 [[package]]
 name = "drawio-render"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "base64",
  "drawio-author",
