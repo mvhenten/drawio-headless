@@ -1,6 +1,6 @@
 {
   "name": "drawio-headless",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Headless authoring and rendering of drawio diagrams. CLI wrapper around the Rust binary.",
   "bin": {
     "drawio-headless": "bin/drawio-headless.js"
