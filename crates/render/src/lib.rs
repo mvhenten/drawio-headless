@@ -10,10 +10,13 @@
 //!    Kubernetes): resolve the glyph against the matching bundled
 //!    [`stencil::StencilLibrary`] and emit SVG.
 //! 4. For each edge: route between the picked connection points. An
-//!    explicit `exitX/exitY`/`entryX/entryY` override always wins; absent
-//!    an override, the endpoint snaps to the nearest side-centre of the
-//!    cell (never a corner), and the unpinned side of the pair is chosen
-//!    so the route's final segment lands perpendicular to the side it
+//!    explicit `exitX/exitY`/`entryX/entryY` override wins over the default
+//!    side-centre pick — unless it names an exact corner (both members `0`
+//!    or `1`), which is nudged to a quarter-point on the same side instead
+//!    (issue #49): no departure or arrival point, pinned or defaulted, ever
+//!    lands on a corner. Absent an override, the endpoint snaps to the
+//!    nearest side-centre of the cell, and the unpinned side of the pair is
+//!    chosen so the route's final segment lands perpendicular to the side it
 //!    enters (see [`edge_endpoints`]). Edges declaring
 //!    `edgeStyle=orthogonalEdgeStyle` render as a two-segment right-angle
 //!    polyline (one corner); other edges fall back to a straight line.
@@ -512,14 +515,14 @@ fn side_centre(cell: &Vertex, side: Side) -> (f64, f64) {
 
 /// Classify an explicit normalised override `(nx, ny)` (an `exitX/exitY` or
 /// `entryX/entryY` pair, each `0..1`) by which side of the cell it sits on.
-/// Used only to infer the *orientation* of a pinned anchor, so the other
-/// (unpinned) end of the edge can still be defaulted sensibly — the pinned
-/// point itself is always used verbatim.
+/// Used to infer the *orientation* of a pinned anchor, so the other
+/// (unpinned) end of the edge can still be defaulted sensibly, and (via
+/// [`nudge_corner_override`]) to pick which side an exact-corner override
+/// gets moved onto.
 ///
 /// An exact corner override (both members at `0`/`1`) is a tie; it reads as
 /// the horizontal side (`Top`/`Bottom`), a deliberate, arbitrary but
-/// deterministic choice — the caller pinned a corner on purpose, so there
-/// is no "correct" orientation to recover.
+/// deterministic choice.
 fn side_of_override(nx: f32, ny: f32) -> Side {
     if ny <= 0.0 {
         Side::Top
@@ -529,6 +532,39 @@ fn side_of_override(nx: f32, ny: f32) -> Side {
         Side::Left
     } else {
         Side::Right
+    }
+}
+
+/// Move an explicit `exitX/exitY`/`entryX/entryY` override off a corner.
+///
+/// A pinned anchor is honoured verbatim *unless* it names an exact corner
+/// (both members at the extreme `0`/`1`) — that reads as ambiguous between
+/// its two adjacent sides rather than a deliberate side attachment, and
+/// literally rendering it leaves the edge departing or arriving at the
+/// cell's corner (issue #49). Corners are common by accident: an author
+/// fanning out several edges from one box picks one bottom corner per edge
+/// to keep them visually separate, without meaning "attach to the corner"
+/// specifically.
+///
+/// The override is reinterpreted as a quarter-point on the side
+/// [`side_of_override`] already ties a corner to (`Top`/`Bottom`), offset
+/// toward whichever half the pinned corner named — e.g. `(0, 1)`
+/// (bottom-left) becomes `(0.25, 1)`: still the bottom side, still biased
+/// left, just off the exact corner. This preserves a fan-out's visual
+/// separation while guaranteeing every attachment point sits on a side,
+/// never a corner.
+///
+/// A non-corner override (either member strictly inside `(0, 1)`) is
+/// returned unchanged.
+fn nudge_corner_override(nx: f32, ny: f32) -> (f32, f32) {
+    let is_extreme = |v: f32| v <= 0.0 || v >= 1.0;
+    if !is_extreme(nx) || !is_extreme(ny) {
+        return (nx, ny);
+    }
+    if side_of_override(nx, ny).is_horizontal_side() {
+        (if nx <= 0.0 { 0.25 } else { 0.75 }, ny)
+    } else {
+        (nx, if ny <= 0.0 { 0.25 } else { 0.75 })
     }
 }
 
@@ -548,8 +584,10 @@ fn facing_side(horizontal: bool, dx: f64, dy: f64) -> Side {
 
 /// Resolve both ends of an edge between `src` and `tgt`.
 ///
-/// An explicit override (`exitX/exitY` or `entryX/entryY`) is always
-/// honoured verbatim — this function never second-guesses a pinned anchor.
+/// An explicit override (`exitX/exitY` or `entryX/entryY`) is honoured
+/// verbatim — this function never second-guesses a pinned anchor — except
+/// when it names an exact corner, which [`nudge_corner_override`] moves to a
+/// quarter-point on the same side first (issue #49).
 ///
 /// Absent an override, the endpoint snaps to one of the four side-centre
 /// anchors, never a corner. When the unpinned end still needs a default
@@ -573,6 +611,10 @@ fn edge_endpoints(
     entry_override: Option<(f32, f32)>,
 ) -> (f64, f64, f64, f64) {
     const EPS: f64 = 1e-6;
+
+    let exit_override = exit_override.map(|(nx, ny)| nudge_corner_override(nx, ny));
+    let entry_override = entry_override.map(|(nx, ny)| nudge_corner_override(nx, ny));
+
     let src_centre = (src.x + src.w / 2.0, src.y + src.h / 2.0);
     let tgt_centre = (tgt.x + tgt.w / 2.0, tgt.y + tgt.h / 2.0);
     let dx = tgt_centre.0 - src_centre.0;
@@ -830,6 +872,73 @@ mod tests {
         let exit = Some((0.5_f32, 1.0_f32));
         let (_, _, tx, ty) = edge_endpoints(&a, &b, exit, None);
         assert_eq!((tx, ty), (300.0, 239.0), "entry should be B's left-mid");
+    }
+
+    #[test]
+    fn explicit_corner_exit_override_is_nudged_off_the_corner() {
+        // Issue #49 repro: a fan-out edge pins its exit to a bottom corner
+        // (as the shipped `event-driven`/`streaming-lanes`/`three-tier-web`
+        // examples did) instead of a side midpoint. The literal corner must
+        // never be used verbatim — it's reinterpreted as a quarter-point on
+        // the bottom side, still biased toward the pinned corner's half.
+        let a = plain_vertex("a", 0.0, 0.0, 78.0, 78.0);
+        let b = plain_vertex("b", 200.0, 300.0, 78.0, 78.0);
+
+        let bottom_left = Some((0.0_f32, 1.0_f32));
+        let (sx, sy, _, _) = edge_endpoints(&a, &b, bottom_left, None);
+        assert_eq!(
+            (sx, sy),
+            (19.5, 78.0),
+            "exit should be A's bottom-quarter-from-left, not the corner (0, 78)"
+        );
+
+        let bottom_right = Some((1.0_f32, 1.0_f32));
+        let (sx, sy, _, _) = edge_endpoints(&a, &b, bottom_right, None);
+        assert_eq!(
+            (sx, sy),
+            (58.5, 78.0),
+            "exit should be A's bottom-quarter-from-right, not the corner (78, 78)"
+        );
+    }
+
+    #[test]
+    fn explicit_corner_entry_override_is_nudged_off_the_corner() {
+        // Same guard on the arrival side: a pinned entry at an exact corner
+        // is nudged to a quarter-point instead of landing on the corner.
+        let a = plain_vertex("a", 0.0, 0.0, 78.0, 78.0);
+        let b = plain_vertex("b", 200.0, 300.0, 78.0, 78.0);
+
+        let top_left = Some((0.0_f32, 0.0_f32));
+        let (_, _, tx, ty) = edge_endpoints(&a, &b, None, top_left);
+        assert_eq!(
+            (tx, ty),
+            (200.0 + 19.5, 300.0),
+            "entry should be B's top-quarter-from-left, not the corner (200, 300)"
+        );
+    }
+
+    #[test]
+    fn all_four_corner_overrides_resolve_to_quarter_points_never_corners() {
+        let src = plain_vertex("a", 0.0, 0.0, 78.0, 78.0);
+        let tgt = plain_vertex("b", 300.0, 300.0, 78.0, 78.0);
+        let corners = [(0.0_f32, 0.0_f32), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)];
+        let is_corner = |x: f64, y: f64, v: &Vertex| {
+            let touches_vertical_side = (x - v.x).abs() < 1e-9 || (x - (v.x + v.w)).abs() < 1e-9;
+            let touches_horizontal_side = (y - v.y).abs() < 1e-9 || (y - (v.y + v.h)).abs() < 1e-9;
+            touches_vertical_side && touches_horizontal_side
+        };
+        for corner in corners {
+            let (sx, sy, _, _) = edge_endpoints(&src, &tgt, Some(corner), None);
+            assert!(
+                !is_corner(sx, sy, &src),
+                "exit override {corner:?} landed on a corner: ({sx}, {sy})"
+            );
+            let (_, _, tx, ty) = edge_endpoints(&src, &tgt, None, Some(corner));
+            assert!(
+                !is_corner(tx, ty, &tgt),
+                "entry override {corner:?} landed on a corner: ({tx}, {ty})"
+            );
+        }
     }
 
     #[test]

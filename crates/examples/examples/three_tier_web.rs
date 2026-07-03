@@ -24,8 +24,11 @@ fn main() -> std::io::Result<()> {
     d.connect(&browser, &lb).exit(0.5, 1.0).entry(0.0, 0.5);
     d.connect(&mobile, &lb).exit(0.5, 1.0).entry(1.0, 0.5);
     d.connect(&lb, &app);
-    d.connect(&app, &database).exit(0.0, 1.0).entry(0.5, 0.0);
-    d.connect(&app, &queue).exit(1.0, 1.0).entry(0.5, 0.0);
+    // Fan out from the app tier's bottom quarter-points (never a corner —
+    // issue #49) so the two backing services' departures don't share an
+    // endpoint.
+    d.connect(&app, &database).exit(0.25, 1.0).entry(0.5, 0.0);
+    d.connect(&app, &queue).exit(0.75, 1.0).entry(0.5, 0.0);
 
     drawio_headless_examples::write_artifacts("three-tier-web", &d)
 }

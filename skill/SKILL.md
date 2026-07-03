@@ -111,7 +111,10 @@ that reads correctly. Full field reference:
    pin anchors explicitly when the default picks the wrong side (e.g. two
    edges fanning into the same side, per rule 4) — and when pinning both,
    respect the same pairing, or the arrowhead will slide along the box
-   edge instead of landing on it.
+   edge instead of landing on it. Never pin an exact corner (both members
+   `0`/`1`) to separate fanned-out edges — pin distinct quarter-points on
+   the same side instead (e.g. `0.25`/`1` and `0.75`/`1`); a corner pin is
+   auto-nudged to a quarter-point, so it won't land where written.
 3. **Align nodes on shared axes.** A flow meant to read as one lane
    (A → B → C) needs its nodes sharing one `x` (vertical lane) or one `y`
    (horizontal lane) so the connecting edges run straight rather than on
