@@ -82,6 +82,63 @@ Coordinates are top-left of the node in user units. Tiles default to
 well for a row of AWS tiles. For trees and meshes, give yourself ~200
 units of vertical separation between layers.
 
+## Layout rules (non-negotiable)
+
+These are the rules that separate a diagram that merely renders from one
+that reads correctly. Full field reference:
+[`docs/authoring-schema.md`](../docs/authoring-schema.md).
+
+1. **No empty boxes.** Every node needs a real catalogue `kind`. A `raw`
+   node or an unrecognised `kind` draws the gray fallback box — that is
+   the failure mode, not a style choice. If no glyph is an exact match,
+   pick the closest metaphor (a globe for a generic client) rather than
+   leaving a node bare. Some Azure glyphs currently render as thin,
+   near-invisible outlines instead of a solid fill (tracked in
+   [#29](https://github.com/mvhenten/drawio-headless/issues/29)) — render
+   a PNG and check before trusting an Azure kind for fidelity.
+2. **Arrows arrive head-on — the L-bend routing rule.** Each edge is
+   either a straight line (source and target already colinear) or one
+   automatic L-bend; there are no manual waypoints. The exit side always
+   determines the final segment's orientation:
+   - exit top/bottom → final segment is vertical → must enter the
+     target's **top/bottom** to land head-on
+   - exit left/right → final segment is horizontal → must enter the
+     target's **left/right** to land head-on
+   Pin both ends explicitly with `exit_x`/`exit_y` and
+   `entry_x`/`entry_y` (each `0..1`; both members of a pair are required
+   or the pair is ignored). An arrowhead that slides along a box edge
+   instead of landing on it means the exit/entry sides contradict the
+   nodes' actual relative position — fix the anchors or move the node,
+   don't leave it.
+3. **Align nodes on shared axes.** A flow meant to read as one lane
+   (A → B → C) needs its nodes sharing one `x` (vertical lane) or one `y`
+   (horizontal lane) so the connecting edges run straight rather than on
+   a diagonal or a needless L-bend.
+4. **No edge labels — use lane separation instead.** This tool has no
+   edge-label rendering. Distinguish parallel paths by placing them on
+   separate visual lanes and by which nodes appear on each path (e.g. an
+   authorizer only on the write lane), not by labelling the arrow. When
+   two edges enter the same side of a node, offset `entry_y` (e.g. 0.3
+   and 0.7) so they don't overlap.
+5. **Groups carry meaning.** Name group containers in domain language
+   ("Payments VPC", "read replica region"), not layout jargon ("Group
+   1", "container").
+
+### Verify before calling it done
+
+Render a PNG and **look at it** — the SVG/`.drawio` XML alone will not
+show you a gray fallback box or a misrouted arrow:
+
+```sh
+drawio-headless compose spec.json /tmp/check.png --format png
+```
+
+Check: no gray fallback boxes, every label present, every arrowhead
+perpendicular to (not sliding along) the edge it lands on, lanes read
+straight. As a rough sanity check on the SVG output: a real glyph-bearing
+SVG runs tens of KB; a suspiciously tiny SVG usually means glyphs failed
+to embed.
+
 ## Discovering available shapes at runtime
 
 To see every factory `kind` the CLI accepts, call:
@@ -169,9 +226,6 @@ echo "$JSON" | drawio-headless compose --stdin > out.svg
   Functions is `gcp.cloud_functions` (plural). Azure App Service is
   `azure.website` (legacy stencil name). Always defer to
   `list-shapes`.
-- **Layout coordinates.** Tiles are ~78 user units across; give them
-  ~240 between centres for a clean linear flow. Stacking nodes at the
-  same `(x, y)` will overlap them.
 - **Edges need both endpoints to exist.** A typo in `source` or
   `target` causes a compose error. Validate ids match a declared
   `node.id`.

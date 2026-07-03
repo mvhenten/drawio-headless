@@ -117,8 +117,9 @@ bash ~/.claude/skills/drawio-headless/scripts/ensure.sh
 
 `ensure.sh` checks that `drawio-headless` is on `PATH` and prints install
 instructions if it isn't — it won't install anything for you. See
-[`skill/SKILL.md`](skill/SKILL.md) for trigger phrases and the schema
-reference the skill uses.
+[`skill/SKILL.md`](skill/SKILL.md) for trigger phrases, the schema
+reference, and the layout rules (anchor semantics, arrow routing, axis
+alignment) that make a composed diagram read correctly.
 
 ## Scope
 
