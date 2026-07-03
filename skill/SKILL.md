@@ -151,17 +151,21 @@ Output is a flat JSON array — one object per factory:
 
 ```json
 [
-  {"library": "aws",   "key": "lambda",       "category": "Compute"},
-  {"library": "azure", "key": "sql_database", "category": "Database"},
-  {"library": "gcp",   "key": "bigquery",     "category": "Big Data"},
-  {"library": "k8s",   "key": "pod",          "category": "Workloads"}
+  {"library": "aws",     "key": "lambda",       "category": "Compute"},
+  {"library": "azure",   "key": "sql_database", "category": "Database"},
+  {"library": "gcp",     "key": "bigquery",     "category": "Big Data"},
+  {"library": "k8s",     "key": "pod",          "category": "Workloads"},
+  {"library": "client",  "key": "browser",      "category": "Actors"},
+  {"library": "generic", "key": "database",     "category": "Infrastructure"}
 ]
 ```
 
 Use this when the user names a service you don't immediately recognise.
 The qualified kind is `<library>.<key>`. Filter to one library with
-`--library aws|azure|gcp|k8s` if the user is sticking to a single
-provider.
+`--library aws|azure|gcp|k8s|client|generic` if the user is sticking to a
+single provider. `client` and `generic` are vendor-neutral — reach for
+them for browsers/mobile apps/end users/external systems and for
+cloud/database/queue/document shapes that aren't tied to one vendor.
 
 ## Worked example
 
@@ -242,7 +246,7 @@ drawio-headless author <input.json> [<output.drawio>] [--stdin]
 drawio-headless render <input.drawio> [<output>]
     [--format svg|png] [--stdin]
 drawio-headless list-shapes
-    [--library aws|azure|gcp|k8s|all]
+    [--library aws|azure|gcp|k8s|client|generic|all]
     [--format text|json]
 ```
 

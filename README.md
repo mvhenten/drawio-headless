@@ -207,17 +207,21 @@ d.connect(&api, &lam);
 let xml: String = d.to_xml();
 ```
 
-Four curated catalogues are exposed: `aws`, `azure`, `gcp`, `k8s`. Each
-emits the canonical drawio style strings for its library, so the
-resulting `.drawio` files round-trip through the upstream editor:
+Six curated catalogues are exposed: `aws`, `azure`, `gcp`, `k8s`, plus the
+vendor-neutral `client` (browser/mobile/person/external system) and
+`generic` (cloud/database/queue/document). Each emits the canonical drawio
+style strings for its library, so the resulting `.drawio` files round-trip
+through the upstream editor:
 
 ```rust
-use drawio_author::{Diagram, azure, gcp, k8s};
+use drawio_author::{Diagram, azure, client, gcp, generic, k8s};
 
 let mut d = Diagram::new("PolyCloud");
 d.add_node(azure::sql_database("db", "Orders").at(80.0, 80.0));
 d.add_node(gcp::bigquery("bq", "Warehouse").at(240.0, 80.0));
 d.add_node(k8s::pod("p", "frontend").at(400.0, 80.0));
+d.add_node(client::browser("browser", "Browser").at(560.0, 80.0));
+d.add_node(generic::database("db2", "Legacy DB").at(720.0, 80.0));
 ```
 
 `Node::raw(id, x, y, w, h, label, style)` is the low-level escape hatch for

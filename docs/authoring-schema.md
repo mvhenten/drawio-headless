@@ -78,9 +78,12 @@ Unknown top-level keys are rejected.
 ### Node kinds
 
 Factories are namespaced as `<library>.<key>`, where `<library>` is one
-of `aws`, `azure`, `gcp`, or `k8s` and `<key>` matches the function name
-in the corresponding `drawio-author` module. Use `raw` to bypass the
-catalogue and supply your own `style` string.
+of `aws`, `azure`, `gcp`, `k8s`, `client`, or `generic` and `<key>` matches
+the function name in the corresponding `drawio-author` module. `client`
+and `generic` are vendor-neutral: browsers/mobile apps/people/external
+systems, and cloud/database/queue/document shapes respectively — for the
+parts of a diagram that aren't any particular vendor's service. Use `raw`
+to bypass the catalogue and supply your own `style` string.
 
 The full catalogue is discoverable at runtime — no need to memorise it:
 
@@ -102,12 +105,13 @@ Indicative members (verify against `list-shapes` for the current set):
   `aws.elasticache`, `aws.efs`, `aws.route_53`,
   `aws.elastic_load_balancing`, `aws.cognito`, `aws.secrets_manager`,
   `aws.kms`, `aws.kinesis`, `aws.athena`, `aws.cloudwatch`.
-- **Azure** (15): `azure.active_directory`, `azure.sql_database`,
+- **Azure** (19): `azure.active_directory`, `azure.entra_id`,
+  `azure.multi_factor_authentication`, `azure.sql_database`,
   `azure.service_bus`, `azure.storage_blob`, `azure.virtual_machine`,
   `azure.virtual_network`, `azure.website`, `azure.cloud_service`,
   `azure.cdn`, `azure.express_route`, `azure.notification_hub`,
   `azure.traffic_manager`, `azure.cache`, `azure.load_balancer`,
-  `azure.storage_queue`.
+  `azure.storage_queue`, `azure.server`, `azure.storage`.
 - **GCP** (15): `gcp.app_engine`, `gcp.cloud_functions`,
   `gcp.compute_engine`, `gcp.gke`, `gcp.cloud_storage`, `gcp.bigquery`,
   `gcp.pubsub`, `gcp.cloud_sql`, `gcp.cloud_datastore`, `gcp.bigtable`,
@@ -116,6 +120,10 @@ Indicative members (verify against `list-shapes` for the current set):
 - **Kubernetes** (10): `k8s.pod`, `k8s.deployment`, `k8s.replica_set`,
   `k8s.service`, `k8s.ingress`, `k8s.config_map`, `k8s.secret`,
   `k8s.namespace`, `k8s.node`, `k8s.persistent_volume`.
+- **Client** (4, vendor-neutral): `client.browser`, `client.mobile`,
+  `client.person`, `client.external_system`.
+- **Generic** (4, vendor-neutral): `generic.cloud`, `generic.database`,
+  `generic.queue`, `generic.document`.
 
 Unknown kinds are rejected with the closest catalogue matches surfaced as a
 "did you mean ...?" hint.

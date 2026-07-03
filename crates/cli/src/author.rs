@@ -9,7 +9,9 @@
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
-use drawio_author::{Diagram, GroupKind, GroupOpts, Node, aws, azure, catalogue, gcp, k8s};
+use drawio_author::{
+    Diagram, GroupKind, GroupOpts, Node, aws, azure, catalogue, client, gcp, generic, k8s,
+};
 use serde::Deserialize;
 
 /// Top-level schema: a named diagram with groups, nodes and edges.
@@ -310,6 +312,20 @@ fn lookup_factory(kind: &str) -> Result<fn(&str, &str) -> Node, AuthorError> {
         ("azure", "traffic_manager") => Some(azure::traffic_manager),
         ("azure", "virtual_machine") => Some(azure::virtual_machine),
         ("azure", "virtual_network") => Some(azure::virtual_network),
+        ("azure", "entra_id") => Some(azure::entra_id),
+        ("azure", "multi_factor_authentication") => Some(azure::multi_factor_authentication),
+        ("azure", "server") => Some(azure::server),
+        ("azure", "storage") => Some(azure::storage),
+
+        ("client", "browser") => Some(client::browser),
+        ("client", "mobile") => Some(client::mobile),
+        ("client", "person") => Some(client::person),
+        ("client", "external_system") => Some(client::external_system),
+
+        ("generic", "cloud") => Some(generic::cloud),
+        ("generic", "database") => Some(generic::database),
+        ("generic", "queue") => Some(generic::queue),
+        ("generic", "document") => Some(generic::document),
 
         ("gcp", "app_engine") => Some(gcp::app_engine),
         ("gcp", "cloud_functions") => Some(gcp::cloud_functions),

@@ -56,6 +56,32 @@ pub fn active_directory(id: &str, label: &str) -> Node {
     azure_node(id, label, "azure_active_directory")
 }
 
+/// Entra ID (Identity). Microsoft renamed Azure Active Directory to Entra ID
+/// in 2023; the legacy stencil set still carries the old product name, so
+/// this is the same glyph as [`active_directory`] under the current name —
+/// the one authors reach for in a fresh diagram (see issue #29).
+pub fn entra_id(id: &str, label: &str) -> Node {
+    azure_node(id, label, "azure_active_directory")
+}
+
+/// Multi-Factor Authentication (Identity) — the MFA challenge that commonly
+/// sits alongside Entra ID in hybrid identity diagrams.
+pub fn multi_factor_authentication(id: &str, label: &str) -> Node {
+    azure_node(id, label, "multi_factor_authentication")
+}
+
+/// Generic on-premises/Azure server (Compute) — the "on-prem" side of a
+/// hybrid topology diagram (e.g. behind `ExpressRoute` or a VPN gateway).
+pub fn server(id: &str, label: &str) -> Node {
+    azure_node(id, label, "server")
+}
+
+/// Generic Storage account (Storage), distinct from the specific
+/// [`storage_blob`]/[`storage_queue`] data-type glyphs.
+pub fn storage(id: &str, label: &str) -> Node {
+    azure_node(id, label, "storage")
+}
+
 /// Azure Cache (Databases / Redis).
 pub fn cache(id: &str, label: &str) -> Node {
     azure_node(id, label, "azure_cache")
@@ -147,6 +173,31 @@ mod tests {
     #[test]
     fn active_directory_factory() {
         assert_azure_style(&active_directory("ad", "Tenant"), "azure_active_directory");
+    }
+
+    #[test]
+    fn entra_id_factory() {
+        // Same underlying glyph as active_directory, under the current
+        // product name.
+        assert_azure_style(&entra_id("eid", "Entra ID"), "azure_active_directory");
+    }
+
+    #[test]
+    fn multi_factor_authentication_factory() {
+        assert_azure_style(
+            &multi_factor_authentication("mfa", "MFA"),
+            "multi_factor_authentication",
+        );
+    }
+
+    #[test]
+    fn server_factory() {
+        assert_azure_style(&server("srv", "On-prem server"), "server");
+    }
+
+    #[test]
+    fn storage_factory() {
+        assert_azure_style(&storage("st", "Storage account"), "storage");
     }
 
     #[test]

@@ -28,9 +28,10 @@
 //!
 //! Render fidelity is not 1:1 with the upstream drawio app. Azure and GCP
 //! shapes lean heavily on stencil DSL commands that this renderer does not
-//! yet implement (`<arc>`, `<save>`/`<restore>`, `<alpha>`, `<strokecolor>`,
-//! `<fillcolor>` — tracked in issue #7). Those commands are silently
-//! skipped, so a shape's outer silhouette may render with reduced detail.
+//! yet fully implement (`<save>`/`<restore>`, `<alpha>`, `<strokecolor>`,
+//! `<fillcolor>` — tracked in issue #7; `<arc>` is now supported). Those
+//! remaining commands are silently skipped, so a shape's outer silhouette
+//! may render with reduced detail.
 
 pub mod inflate;
 pub mod model;
