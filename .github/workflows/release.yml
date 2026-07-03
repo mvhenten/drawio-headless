@@ -171,6 +171,13 @@ jobs:
           node -e "const fs=require('fs');const p=require('./package.json');p.version='${version}';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');"
           head -5 package.json
 
+      - name: OIDC diagnostics
+        working-directory: npm
+        run: |
+          echo "ACTIONS_ID_TOKEN_REQUEST_URL present: ${ACTIONS_ID_TOKEN_REQUEST_URL:+yes}"
+          echo "npm version: $(npm --version)"
+          npm config list
+
       - name: Publish to npm
         working-directory: npm
-        run: npm publish --access public
+        run: npm publish --access public --loglevel http || { tail -100 /home/runner/.npm/_logs/*.log; exit 1; }
