@@ -272,6 +272,7 @@ fn lookup_factory(kind: &str) -> Result<fn(&str, &str) -> Node, AuthorError> {
         ("aws", "ec2") => Some(aws::ec2),
         ("aws", "sqs") => Some(aws::sqs),
         ("aws", "sns") => Some(aws::sns),
+        ("aws", "ses") => Some(aws::ses),
         ("aws", "cloudfront") => Some(aws::cloudfront),
         ("aws", "msk") => Some(aws::msk),
         ("aws", "iam") => Some(aws::iam),

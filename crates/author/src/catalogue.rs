@@ -63,6 +63,11 @@ pub const ENTRIES: &[Entry] = &[
     },
     Entry {
         library: "aws",
+        key: "ses",
+        category: "Application Integration",
+    },
+    Entry {
+        library: "aws",
         key: "sqs",
         category: "Application Integration",
     },

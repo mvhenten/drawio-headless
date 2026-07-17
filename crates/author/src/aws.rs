@@ -69,6 +69,11 @@ pub fn sns(id: &str, label: &str) -> Node {
     aws_node(id, label, "#E7157B", "mxgraph.aws4.sns")
 }
 
+/// SES tile (Business Applications — Simple Email Service).
+pub fn ses(id: &str, label: &str) -> Node {
+    aws_node(id, label, "#DD344C", "mxgraph.aws4.simple_email_service")
+}
+
 /// `CloudFront` tile (Networking & Content Delivery).
 pub fn cloudfront(id: &str, label: &str) -> Node {
     aws_node(id, label, "#8C4FFF", "mxgraph.aws4.cloudfront")
