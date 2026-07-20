@@ -142,7 +142,7 @@ around the nodes that belong to it is enough.
 | `x`      | number  | yes      | —       | Top-left x. |
 | `y`      | number  | yes      | —       | Top-left y. |
 | `width`  | number  | yes      | —       | Container width. |
-| `height` | number  | yes      | —       | Container height. |
+| `height` | number  | yes      | —       | Container height. Grown at render time when needed so member captions stay inside the border. |
 
 ## Edge spec
 

@@ -73,6 +73,29 @@ const GCP_STENCIL: &str = include_str!("../../../stencils/gcp.xml");
 /// Bundled Kubernetes stencil source.
 const KUBERNETES_STENCIL: &str = include_str!("../../../stencils/kubernetes.xml");
 
+/// A node's caption is drawn centred below its icon tile. These constants are
+/// the single source of truth for that band: the label baseline sits
+/// [`CAPTION_GAP`] below the tile, and a group container reserves the whole
+/// band ([`CAPTION_GAP`] plus the font descent) so a member's caption never
+/// crosses the group border.
+const CAPTION_FONT_SIZE: f64 = 12.0;
+/// Vertical gap from an icon tile's bottom edge to its caption baseline.
+const CAPTION_GAP: f64 = 16.0;
+/// Caption font descent below the baseline (approximate for sans-serif).
+const CAPTION_DESCENT: f64 = CAPTION_FONT_SIZE * 0.25;
+/// Clearance kept between the lowest member caption band and the group border.
+const GROUP_CAPTION_MARGIN: f64 = 8.0;
+
+/// Caption baseline y for a tile whose bottom edge is at `tile_bottom`.
+fn caption_baseline(tile_bottom: f64) -> f64 {
+    tile_bottom + CAPTION_GAP
+}
+
+/// Bottom of the caption band (baseline plus descent) below `tile_bottom`.
+fn caption_band_bottom(tile_bottom: f64) -> f64 {
+    caption_baseline(tile_bottom) + CAPTION_DESCENT
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum RenderError {
     #[error("XML parse error: {0}")]
@@ -181,8 +204,39 @@ fn aws4_res_icon_alias(res_icon: &str) -> Option<&'static str> {
 
 /// Render a `.drawio` XML string to SVG.
 pub fn render(xml: &str) -> Result<String, RenderError> {
-    let model = model::parse(xml)?;
+    let mut model = model::parse(xml)?;
+    reserve_member_caption_bands(&mut model);
     Ok(render_model(&model))
+}
+
+/// Grow each group container downward so it fully contains the caption band
+/// below every member tile it encloses. Membership is by geometric
+/// containment of the tile centre. Growth only ever increases a group's
+/// height — it never shrinks or moves a container the author sized larger.
+fn reserve_member_caption_bands(model: &mut Model) {
+    let members: Vec<(f64, f64, f64, f64)> = model
+        .vertices
+        .iter()
+        .filter(|v| !is_group(&v.style))
+        .map(|v| (v.x, v.y, v.w, v.h))
+        .collect();
+    for group in model.vertices.iter_mut().filter(|v| is_group(&v.style)) {
+        let mut needed_bottom = group.y + group.h;
+        for &(mx, my, mw, mh) in &members {
+            let cx = mx + mw / 2.0;
+            let cy = my + mh / 2.0;
+            let inside = cx >= group.x
+                && cx <= group.x + group.w
+                && cy >= group.y
+                && cy <= group.y + group.h;
+            if !inside {
+                continue;
+            }
+            let reserved = caption_band_bottom(my + mh) + GROUP_CAPTION_MARGIN;
+            needed_bottom = needed_bottom.max(reserved);
+        }
+        group.h = needed_bottom - group.y;
+    }
 }
 
 fn render_model(model: &Model) -> String {
@@ -395,10 +449,10 @@ fn render_vertex(out: &mut String, v: &Vertex) {
     // Label: plain text below the cell, horizontally centred.
     if !v.label.is_empty() {
         let cx = v.x + v.w / 2.0;
-        let ly = v.y + v.h + 14.0;
+        let ly = caption_baseline(v.y + v.h);
         let _ = write!(
             out,
-            "<text x=\"{cx}\" y=\"{ly}\" font-family=\"sans-serif\" font-size=\"12\" \
+            "<text x=\"{cx}\" y=\"{ly}\" font-family=\"sans-serif\" font-size=\"{CAPTION_FONT_SIZE}\" \
              fill=\"{font_color}\" text-anchor=\"middle\">{}</text>",
             escape_text(&v.label)
         );
