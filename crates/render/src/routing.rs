@@ -579,6 +579,24 @@ fn jetty_route(
     Route { points }
 }
 
+/// A two-bend Z between two *parallel* faces (both horizontal or both
+/// vertical). A single-bend L can be perpendicular to only one of them, so
+/// the arrowhead would slide along the pinned entry face (issue #55). The
+/// route instead leaves `exit_pt` perpendicular to its face, crosses on a
+/// mid lane, and arrives at `entry_pt` perpendicular to its face.
+fn crossover_route(exit_pt: (f64, f64), exit_side: Side, entry_pt: (f64, f64)) -> Route {
+    let (p1, p2) = if exit_side.is_horizontal_side() {
+        let lane = f64::midpoint(exit_pt.1, entry_pt.1);
+        ((exit_pt.0, lane), (entry_pt.0, lane))
+    } else {
+        let lane = f64::midpoint(exit_pt.0, entry_pt.0);
+        ((lane, exit_pt.1), (lane, entry_pt.1))
+    };
+    let mut points = vec![exit_pt, p1, p2, entry_pt];
+    points.dedup_by(|a, b| points_close(*a, *b));
+    Route { points }
+}
+
 /// R5, nudging the leg adjacent to `exit_pt`: leave `exit_pt` normally,
 /// bend onto `lane`, run the trunk there, then bend back onto the entry
 /// anchor's own axis for a perpendicular arrival.
@@ -865,10 +883,9 @@ fn legacy_route(
     let dy = tgt_centre.1 - src_centre.1;
     let colinear = dx.abs() < EPS || dy.abs() < EPS;
 
-    let (ex, ey, exit_side) = if let Some((nx, ny)) = exit_override {
+    let (exit_pt, exit_side) = if let Some((nx, ny)) = exit_override {
         (
-            src.x + f64::from(nx) * src.w,
-            src.y + f64::from(ny) * src.h,
+            (src.x + f64::from(nx) * src.w, src.y + f64::from(ny) * src.h),
             side_of_override(nx, ny),
         )
     } else {
@@ -883,27 +900,39 @@ fn legacy_route(
             }
             None => facing_side(dy.abs() >= dx.abs(), dx, dy),
         };
-        let (x, y) = side_centre(src, side);
-        (x, y, side)
+        (side_centre(src, side), side)
     };
 
-    let (tx, ty) = if let Some((nx, ny)) = entry_override {
-        (tgt.x + f64::from(nx) * tgt.w, tgt.y + f64::from(ny) * tgt.h)
+    let (entry_pt, entry_side) = if let Some((nx, ny)) = entry_override {
+        (
+            (tgt.x + f64::from(nx) * tgt.w, tgt.y + f64::from(ny) * tgt.h),
+            side_of_override(nx, ny),
+        )
     } else {
         let side = if colinear {
             exit_side.opposite()
         } else {
             facing_side(!exit_side.is_horizontal_side(), -dx, -dy)
         };
-        side_centre(tgt, side)
+        (side_centre(tgt, side), side)
     };
 
-    match legacy_orthogonal_corner(src, (ex, ey), (tx, ty)) {
-        Some((cx, cy)) => Route {
-            points: vec![(ex, ey), (cx, cy), (tx, ty)],
+    let parallel_faces = exit_side.is_horizontal_side() == entry_side.is_horizontal_side();
+    let straight = if exit_side.is_horizontal_side() {
+        (exit_pt.0 - entry_pt.0).abs() < EPS
+    } else {
+        (exit_pt.1 - entry_pt.1).abs() < EPS
+    };
+    if parallel_faces && !straight {
+        return crossover_route(exit_pt, exit_side, entry_pt);
+    }
+
+    match legacy_orthogonal_corner(src, exit_pt, entry_pt) {
+        Some(corner) => Route {
+            points: vec![exit_pt, corner, entry_pt],
         },
         None => Route {
-            points: vec![(ex, ey), (tx, ty)],
+            points: vec![exit_pt, entry_pt],
         },
     }
 }
@@ -966,6 +995,11 @@ mod tests {
         let (sx, sy) = route.points[0];
         let (tx, ty) = *route.points.last().unwrap();
         (sx, sy, tx, ty)
+    }
+
+    fn final_segment(route: &Route) -> ((f64, f64), (f64, f64)) {
+        let n = route.points.len();
+        (route.points[n - 2], route.points[n - 1])
     }
 
     /// Route the single edge `a -> b` in an otherwise-empty model and
@@ -1145,6 +1179,35 @@ mod tests {
                 "exit override {style} landed on a corner: ({sx}, {sy})"
             );
         }
+    }
+
+    #[test]
+    fn pinned_entry_face_is_entered_perpendicular_issue_55() {
+        // Issue #55: an entry pinned to a face whose orientation is parallel
+        // to the router's would-be final segment must still be entered
+        // head-on. The final segment has to run perpendicular to the pinned
+        // face — never along it — so the arrowhead points into the box.
+        let a = plain_vertex("a", 300.0, 40.0, 78.0, 78.0);
+        let c = plain_vertex("b", 560.0, 340.0, 78.0, 78.0);
+        let d = plain_vertex("b", 60.0, 340.0, 78.0, 78.0);
+
+        // a -> c enters c's left face: the final segment must be horizontal.
+        let route = route_pair(a.clone(), c, "exitX=1;exitY=0.5;entryX=0;entryY=0.5;");
+        let (prev, last) = final_segment(&route);
+        assert_eq!(last, (560.0, 379.0), "arrowhead lands on the pinned entry");
+        assert!(
+            (prev.1 - last.1).abs() < EPS && (prev.0 - last.0).abs() > EPS,
+            "left-face entry must be entered by a horizontal segment: {route:?}"
+        );
+
+        // a -> d enters d's top face: the final segment must be vertical.
+        let route = route_pair(a, d, "exitX=0;exitY=1;entryX=0.5;entryY=0;");
+        let (prev, last) = final_segment(&route);
+        assert_eq!(last, (99.0, 340.0), "arrowhead lands on the pinned entry");
+        assert!(
+            (prev.0 - last.0).abs() < EPS && (prev.1 - last.1).abs() > EPS,
+            "top-face entry must be entered by a vertical segment: {route:?}"
+        );
     }
 
     #[test]
