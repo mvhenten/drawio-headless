@@ -236,6 +236,90 @@ fn group_boundary_renders_as_dashed_rect() {
 }
 
 #[test]
+fn group_reserves_member_caption_band_below_tile() {
+    // Regression for issue #54: a node near a group's bottom rendered its
+    // caption below the dashed border, the boundary running through the label.
+    // The container must reserve the caption band so every member label sits
+    // inside the border, with a constant tile-to-caption gap.
+    const TILE_BOTTOM: f64 = 60.0 + 78.0;
+    const EXPECTED_GAP: f64 = 16.0;
+    const CAPTION_DESCENT: f64 = 3.0;
+    const BORDER_MARGIN: f64 = 8.0;
+
+    let out = out_dir();
+    let mut d = Diagram::new("Repro");
+    d.add_group(GroupOpts::new(
+        "g",
+        "Boundary",
+        20.0,
+        20.0,
+        260.0,
+        130.0,
+        GroupKind::Generic,
+    ));
+    d.add_node(aws::lambda("a", "Service A").at(60.0, 60.0));
+    d.add_node(aws::dynamodb("b", "Store").at(180.0, 60.0));
+    let svg = drawio_render::render(&d.to_xml()).expect("render");
+    fs::write(out.join("issue-54-caption-band.svg"), &svg).expect("write svg");
+
+    let group = group_rect(&svg);
+    let group_bottom = group.1 + group.3;
+
+    for label in ["Service A", "Store"] {
+        let (cx, baseline, half_width) = caption_text(&svg, label);
+        assert!(
+            (baseline - TILE_BOTTOM - EXPECTED_GAP).abs() < 1e-6,
+            "{label}: tile-to-caption gap {} != {EXPECTED_GAP}",
+            baseline - TILE_BOTTOM,
+        );
+        assert!(
+            baseline + CAPTION_DESCENT <= group_bottom - BORDER_MARGIN + 1e-6,
+            "{label}: caption band bottom {} crosses group border {group_bottom}",
+            baseline + CAPTION_DESCENT,
+        );
+        assert!(
+            cx - half_width >= group.0 && cx + half_width <= group.0 + group.2,
+            "{label}: caption horizontal bounds escape group",
+        );
+    }
+}
+
+/// First float attribute named `name` in an SVG element `fragment`. The
+/// leading space avoids matching a suffixed attribute (`rx`/`ry`/`stroke-width`).
+fn attr_f64(fragment: &str, name: &str) -> f64 {
+    let key = format!(" {name}=\"");
+    let start = fragment.find(&key).map(|i| i + key.len()).expect("attr");
+    let end = fragment[start..].find('"').expect("attr close") + start;
+    fragment[start..end].parse().expect("f64 attr")
+}
+
+/// Parse (x, y, width, height) of the dashed group boundary rect.
+fn group_rect(svg: &str) -> (f64, f64, f64, f64) {
+    let frag = svg
+        .split("<rect")
+        .find(|f| f.contains("stroke-dasharray") && f.contains("rx=\"6\""))
+        .expect("group rect");
+    (
+        attr_f64(frag, "x"),
+        attr_f64(frag, "y"),
+        attr_f64(frag, "width"),
+        attr_f64(frag, "height"),
+    )
+}
+
+/// Parse a caption's centre x, baseline y and a generous half text width.
+#[allow(clippy::cast_precision_loss)]
+fn caption_text(svg: &str, label: &str) -> (f64, f64, f64) {
+    let needle = format!(">{label}</text>");
+    let frag = svg
+        .split("<text")
+        .find(|f| f.contains(&needle))
+        .expect("caption text");
+    let half_width = label.chars().count() as f64 * 8.0 / 2.0;
+    (attr_f64(frag, "x"), attr_f64(frag, "y"), half_width)
+}
+
+#[test]
 fn opensearch_curated_and_raw_res_icon_render_glyph() {
     // Regression for the "raw resIcon renders as a plain box" bug. Both the
     // curated `aws::opensearch` factory and a hand-authored raw node carrying
